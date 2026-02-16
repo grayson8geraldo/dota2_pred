@@ -239,44 +239,29 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
     """
     Parse Liquipedia Matches page HTML.
 
-    Actual HTML structure (as of 2026):
-      <div class="new-match-style">
-        <div class="match-info">
-          <span class="match-info-countdown">
-            <span class="timer-object" data-timestamp="...">...</span>
-          </span>
-          <div class="match-info-header">
-            <div class="match-info-header-opponent match-info-header-opponent-left">
-              <div class="block-team flipped">
-                <span class="team-template-image-icon ...">
-                  <a href="..." title="Team Name">...</a>
-                </span>
-              </div>
-            </div>
-            ...right opponent same structure...
-          </div>
-        </div>
-      </div>
+    Actual structure (as of 2026-02): each match is a
+    ``<div class="match-info">`` block containing:
+      - ``<span class="timer-object" data-timestamp="...">``
+      - ``<div class="block-team ...">`` with ``<a title="Team Name">``
+        (appears once per opponent, lightmode/darkmode icons each have
+         their own <a> but same title — deduplicate per block-team div)
 
-    Tournament headers are in <div class="match-section-header">.
+    Tournament headers use ``<div class="match-section-header">``.
     """
     now = time.time()
 
     # ---- Split into individual match blocks ----
-    # Each match is inside <div class="new-match-style">
-    match_blocks = re.split(r'<div\s+class="new-match-style">', html)
-    # First element is everything before the first match block
-    preamble = match_blocks[0] if match_blocks else ""
-    match_blocks = match_blocks[1:]  # Remove preamble
+    # Each match lives inside <div class="match-info">
+    parts = re.split(r'<div\s+class="match-info">', html)
+    # First element is the preamble (before any match)
+    match_blocks = parts[1:]
 
-    logger.info(f"Liquipedia: found {len(match_blocks)} match blocks")
+    logger.info(f"Liquipedia: found {len(match_blocks)} match-info blocks")
 
     if not match_blocks:
         return []
 
-    # ---- Track current tournament from section headers ----
-    # Section headers appear between match blocks in the full HTML.
-    # Find all section headers with positions.
+    # ---- Collect tournament section headers with positions ----
     section_headers = []
     for m in re.finditer(
         r'<div\s+class="match-section-header"[^>]*>.*?'
@@ -286,36 +271,50 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
     ):
         section_headers.append((m.start(), m.group(1)))
 
-    # Also find positions of each match block in the original HTML
+    # Find position of each match block in the original HTML
     block_positions = []
-    search_start = 0
+    search_from = 0
     for block in match_blocks:
-        pos = html.find(block[:100], search_start)
-        block_positions.append(pos if pos >= 0 else search_start)
-        search_start = pos + 1 if pos >= 0 else search_start + 1
+        # Use a short prefix to locate the block
+        snippet = block[:80]
+        pos = html.find(snippet, search_from)
+        block_positions.append(pos if pos >= 0 else search_from)
+        search_from = (pos + 1) if pos >= 0 else (search_from + 1)
 
     # ---- Parse each match block ----
     matches = []
 
     for idx, block in enumerate(match_blocks):
-        # Extract team names from <a> tags inside block-team divs
-        # The title attribute of <a> inside team-template-image-icon has the team name
-        teams = re.findall(
-            r'<div\s+class="block-team[^"]*"[^>]*>.*?'
-            r'<a[^>]*\btitle="([^"]+)"',
+        # Each block-team div has one or more <a title="..."> for the same team
+        # (lightmode + darkmode icons). We extract per block-team div and
+        # deduplicate by taking the first title per div.
+        team_divs = re.findall(
+            r'<div\s+class="block-team[^"]*"[^>]*>(.*?)</div>\s*</div>',
             block,
             re.DOTALL,
         )
 
+        teams = []
+        for div_content in team_divs:
+            # Get the first <a title="..."> in this block-team div
+            a_match = re.search(r'<a[^>]*\btitle="([^"]+)"', div_content)
+            if a_match:
+                teams.append(a_match.group(1))
+
+        # Fallback: if block-team parsing missed, try broader pattern
         if len(teams) < 2:
-            # Fallback: find any <a> with title inside the block
-            # that's near a team-template class
-            teams = re.findall(
+            teams = []
+            seen = set()
+            for a in re.finditer(
                 r'team-template-image-icon[^>]*>\s*'
                 r'<a[^>]*\btitle="([^"]+)"',
                 block,
                 re.DOTALL,
-            )
+            ):
+                name = a.group(1)
+                if name not in seen:
+                    seen.add(name)
+                    teams.append(name)
 
         if len(teams) < 2:
             continue
@@ -323,7 +322,6 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
         team1 = teams[0]
         team2 = teams[1]
 
-        # Skip if same team (shouldn't happen)
         if team1 == team2:
             continue
 
@@ -335,7 +333,7 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
         if start_time and start_time < now - 6 * 3600:
             continue
 
-        # Determine current tournament from nearest section header before this block
+        # Find tournament from nearest section header before this block
         league = "Unknown"
         block_pos = block_positions[idx] if idx < len(block_positions) else 0
         for hdr_pos, hdr_name in reversed(section_headers):
@@ -343,7 +341,7 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
                 league = hdr_name
                 break
 
-        # If no section header found, try to find tournament link inside block
+        # Fallback: search inside block for tournament link
         if league == "Unknown":
             tourn_match = re.search(
                 r'<a[^>]*title="([^"]+(?:League|Major|Minor|Championship|'

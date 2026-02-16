@@ -373,8 +373,14 @@ class MatchPredictor:
             t2_info = self.find_team_by_name(team2_name)
 
             if not t1_info or not t2_info:
-                logger.debug(
-                    f"Could not resolve upcoming match: {team1_name} vs {team2_name}"
+                missing = []
+                if not t1_info:
+                    missing.append(team1_name)
+                if not t2_info:
+                    missing.append(team2_name)
+                logger.info(
+                    f"  Could not resolve: {team1_name} vs {team2_name} "
+                    f"(missing: {', '.join(missing)})"
                 )
                 continue
 
