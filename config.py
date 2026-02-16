@@ -14,7 +14,7 @@ MAX_RETRIES = 3
 # Data collection settings
 PRO_MATCHES_LIMIT = 500  # Number of recent pro matches to fetch for training
 TEAM_MATCH_HISTORY = 50  # Last N matches per team for form calculation
-H2H_LOOKBACK = 30  # Number of months to look back for head-to-head
+H2H_LOOKBACK = 18  # Number of months to look back for head-to-head
 
 # Feature weights (tuned empirically)
 # These represent relative importance of each factor group
@@ -29,7 +29,7 @@ FEATURE_GROUPS = {
 }
 
 # Hero data
-TOTAL_HEROES = 140  # Approximate number of Dota 2 heroes
+TOTAL_HEROES = 145  # Approximate number of Dota 2 heroes (updated 2026)
 
 # Model settings
 MODEL_PATH = "model_data/"

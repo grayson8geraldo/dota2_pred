@@ -56,9 +56,9 @@ def extract_team_rating_features(
     rating_diff = rad_rating - dire_rating
     elo_prob = _elo_expected(rad_rating, dire_rating)
 
-    # Normalize ratings (typical pro range: 800-2000)
-    rad_norm = (rad_rating - 800) / 1200
-    dire_norm = (dire_rating - 800) / 1200
+    # Normalize ratings to [0, 1] (pro range: ~800-2000)
+    rad_norm = max(0.0, min(1.0, (rad_rating - 800) / 1200))
+    dire_norm = max(0.0, min(1.0, (dire_rating - 800) / 1200))
 
     return [rating_diff, elo_prob, rad_norm, dire_norm]
 
@@ -85,12 +85,18 @@ def extract_recent_form_features(
         if not matches:
             return 0.5, 0.5, 0.0
 
+        # Ensure newest-first ordering (OpenDota returns newest first,
+        # but guard against unexpected ordering)
+        matches = sorted(matches, key=lambda m: m.get("start_time", 0), reverse=True)
+
         now = time.time()
         wins = 0
         weighted_wins = 0.0
         weighted_total = 0.0
+
+        # Current streak: count consecutive W or L from most recent match
         streak = 0
-        streak_counting = True
+        streak_done = False
 
         for m in matches:
             is_win = m.get("win") == 1 if "win" in m else m.get("radiant_win", False)
@@ -105,14 +111,15 @@ def extract_recent_form_features(
             if is_win:
                 weighted_wins += w
 
-            # Win/loss streak
-            if streak_counting:
-                if is_win:
-                    streak += 1
+            # Current streak (from most recent match backwards)
+            if not streak_done:
+                if streak == 0:
+                    # First match sets direction
+                    streak = 1 if is_win else -1
+                elif (streak > 0 and is_win) or (streak < 0 and not is_win):
+                    streak += 1 if is_win else -1
                 else:
-                    if streak == 0:
-                        streak -= 1
-                    streak_counting = False
+                    streak_done = True  # direction changed, lock streak
 
         winrate = _safe_div(wins, len(matches), 0.5)
         weighted_wr = _safe_div(weighted_wins, weighted_total, 0.5)
@@ -146,25 +153,24 @@ def extract_h2h_features(
     """
     rad_matches = radiant_team.get("matches", [])
 
-    h2h_total = 0
-    h2h_rad_wins = 0
-    h2h_recent_wins = 0
-    h2h_recent_total = 0
+    # Ensure newest-first ordering
+    rad_matches = sorted(rad_matches, key=lambda m: m.get("start_time", 0), reverse=True)
 
+    # Collect all h2h matches, newest first
+    h2h_matches: list[bool] = []  # True = radiant team won
     for m in rad_matches:
         opposing_id = m.get("opposing_team_id")
         if opposing_id == dire_team_id:
-            h2h_total += 1
             is_win = m.get("win") == 1 if "win" in m else m.get("radiant_win", False)
-            if is_win:
-                h2h_rad_wins += 1
-            if h2h_total <= 10:
-                h2h_recent_total += 1
-                if is_win:
-                    h2h_recent_wins += 1
+            h2h_matches.append(is_win)
 
+    h2h_total = len(h2h_matches)
+    h2h_rad_wins = sum(h2h_matches)
     h2h_wr = _safe_div(h2h_rad_wins, h2h_total, 0.5)
-    h2h_recent_wr = _safe_div(h2h_recent_wins, h2h_recent_total, 0.5)
+
+    # Recent h2h: last 10 matches (already newest-first)
+    recent = h2h_matches[:10]
+    h2h_recent_wr = _safe_div(sum(recent), len(recent), 0.5) if recent else h2h_wr
 
     return [
         min(h2h_total, 30) / 30.0,  # normalize game count
@@ -276,9 +282,9 @@ def extract_map_side_features(is_radiant_first_pick: bool = True) -> list[float]
     Returns:
         [radiant_advantage, first_pick_advantage]
     """
-    # Historical Radiant advantage in pro matches (~1-3% depending on patch)
-    radiant_adv = 0.02
-    first_pick_adv = 0.01 if is_radiant_first_pick else -0.01
+    # Radiant advantage in pro matches (~1-2% in recent patches, trending down)
+    radiant_adv = 0.015
+    first_pick_adv = 0.008 if is_radiant_first_pick else -0.008
     return [radiant_adv, first_pick_adv]
 
 
@@ -339,8 +345,9 @@ def extract_roster_features(
 
         # How many games played together as a team
         games_together = sum(p.get("games_played", 0) for p in current_players)
-        # Normalize (100+ games together = very stable)
-        stability = min(games_together / 500.0, 1.0)
+        # Log scale: 1 game = 0.0, ~50 games = 0.5, ~500 games = 0.8, ~2500 = 1.0
+        # This preserves signal across all tiers instead of saturating at 500
+        stability = min(math.log1p(games_together) / math.log1p(2500), 1.0)
         return stability
 
     rad_stab = _stability(radiant_team)

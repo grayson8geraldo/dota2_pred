@@ -52,6 +52,9 @@ def api_predict():
     result = predictor.predict_by_names(radiant, dire, series_type=series_type)
     predictor.save_caches()
 
+    if "error" in result:
+        return jsonify(result), 404
+
     return jsonify(result)
 
 
@@ -107,4 +110,5 @@ def api_today():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true")
+    app.run(host="0.0.0.0", port=port, debug=debug)

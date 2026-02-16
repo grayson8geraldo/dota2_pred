@@ -192,20 +192,21 @@ class MatchPredictor:
         else:
             confidence_label = "LOW"
 
-        # Feature breakdown
+        # Feature breakdown (use name lookup instead of fragile indices)
+        f = dict(zip(feature_names, features))
         breakdown = {
             "team_ratings": {
                 "radiant": rad_team.get("info", {}).get("rating", "N/A"),
                 "dire": dire_team.get("info", {}).get("rating", "N/A"),
-                "elo_win_prob": f"{features[1]:.1%}",
+                "elo_win_prob": f"{f.get('elo_win_prob', 0.5):.1%}",
             },
             "recent_form": {
-                "radiant_winrate": f"{features[4]:.1%}",
-                "dire_winrate": f"{features[5]:.1%}",
+                "radiant_winrate": f"{f.get('rad_winrate', 0.5):.1%}",
+                "dire_winrate": f"{f.get('dire_winrate', 0.5):.1%}",
             },
             "h2h": {
-                "games": int(features[11] * 30),
-                "radiant_winrate": f"{features[12]:.1%}",
+                "games": int(f.get('h2h_games', 0) * 30),
+                "radiant_winrate": f"{f.get('h2h_rad_winrate', 0.5):.1%}",
             },
         }
 

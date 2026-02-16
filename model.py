@@ -15,6 +15,7 @@ import joblib
 from sklearn.ensemble import GradientBoostingClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, log_loss, brier_score_loss
@@ -70,22 +71,24 @@ class Dota2Predictor:
         """
         logger.info(f"Training on {X.shape[0]} samples, {X.shape[1]} features...")
 
-        # Scale features
-        X_scaled = self.scaler.fit_transform(X)
-
-        # Cross-validation
+        # Cross-validation with proper per-fold scaling (no data leakage)
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-        # Evaluate individual models
-        gbm_scores = cross_val_score(self.gbm, X_scaled, y, cv=cv, scoring="accuracy")
-        lr_scores = cross_val_score(self.lr, X_scaled, y, cv=cv, scoring="accuracy")
-        ensemble_scores = cross_val_score(self.ensemble, X_scaled, y, cv=cv, scoring="accuracy")
+        # Wrap each model in a Pipeline so the scaler is re-fit per fold
+        gbm_pipe = Pipeline([("scaler", StandardScaler()), ("clf", self.gbm)])
+        lr_pipe = Pipeline([("scaler", StandardScaler()), ("clf", self.lr)])
+        ens_pipe = Pipeline([("scaler", StandardScaler()), ("clf", self.ensemble)])
+
+        gbm_scores = cross_val_score(gbm_pipe, X, y, cv=cv, scoring="accuracy")
+        lr_scores = cross_val_score(lr_pipe, X, y, cv=cv, scoring="accuracy")
+        ensemble_scores = cross_val_score(ens_pipe, X, y, cv=cv, scoring="accuracy")
 
         logger.info(f"  GBM CV accuracy: {gbm_scores.mean():.4f} (+/- {gbm_scores.std():.4f})")
         logger.info(f"  LR CV accuracy:  {lr_scores.mean():.4f} (+/- {lr_scores.std():.4f})")
         logger.info(f"  Ensemble CV:     {ensemble_scores.mean():.4f} (+/- {ensemble_scores.std():.4f})")
 
-        # Train final model on all data
+        # Train final model on all data (single scaler for production)
+        X_scaled = self.scaler.fit_transform(X)
         self.ensemble.fit(X_scaled, y)
         self.gbm.fit(X_scaled, y)  # Also fit individually for feature importances
 

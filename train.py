@@ -77,6 +77,12 @@ def build_training_data(
 
             # Check for NaN/inf
             if np.any(np.isnan(features)) or np.any(np.isinf(features)):
+                bad_idx = np.where(np.isnan(features) | np.isinf(features))[0]
+                fnames = get_feature_names()
+                bad_names = [fnames[i] for i in bad_idx if i < len(fnames)]
+                logger.warning(
+                    f"Match {match.get('match_id', '?')}: NaN/inf in features: {bad_names}"
+                )
                 features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
 
             X_list.append(features)
