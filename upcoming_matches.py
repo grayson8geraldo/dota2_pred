@@ -237,137 +237,123 @@ def _fetch_from_liquipedia() -> list[dict]:
 
 def _parse_liquipedia_ticker(html: str) -> list[dict]:
     """
-    Parse Liquipedia match ticker HTML.
+    Parse Liquipedia Matches page HTML.
 
-    Tries multiple strategies since the HTML structure can vary:
-    1. Look for team-template-text in any element (span, a, div)
-    2. Pair consecutive team names as opponents
-    3. Find nearest timestamp for each pair
+    Actual HTML structure (as of 2026):
+      <div class="new-match-style">
+        <div class="match-info">
+          <span class="match-info-countdown">
+            <span class="timer-object" data-timestamp="...">...</span>
+          </span>
+          <div class="match-info-header">
+            <div class="match-info-header-opponent match-info-header-opponent-left">
+              <div class="block-team flipped">
+                <span class="team-template-image-icon ...">
+                  <a href="..." title="Team Name">...</a>
+                </span>
+              </div>
+            </div>
+            ...right opponent same structure...
+          </div>
+        </div>
+      </div>
+
+    Tournament headers are in <div class="match-section-header">.
     """
     now = time.time()
 
-    # ---- Strategy 1: Find all team names ----
-    # team-template-text can appear in <span>, <a>, or other elements
-    # Pattern: class containing "team-template-text" followed by an <a> with title
-    team_pattern_a = re.compile(
-        r'class="[^"]*team-template-text[^"]*"[^>]*>'
-        r'[^<]*<a[^>]*title="([^"]+)"',
-        re.DOTALL,
-    )
-    # Alternative: team-template-text as a direct <a> class
-    team_pattern_b = re.compile(
-        r'<a[^>]*class="[^"]*team-template-text[^"]*"[^>]*title="([^"]+)"',
-        re.DOTALL,
-    )
-    # Alternative: team name in a span with data-highlightingclass
-    team_pattern_c = re.compile(
-        r'data-highlightingclass="([^"]+)"',
-        re.DOTALL,
-    )
+    # ---- Split into individual match blocks ----
+    # Each match is inside <div class="new-match-style">
+    match_blocks = re.split(r'<div\s+class="new-match-style">', html)
+    # First element is everything before the first match block
+    preamble = match_blocks[0] if match_blocks else ""
+    match_blocks = match_blocks[1:]  # Remove preamble
 
-    # Collect team names with their positions in HTML
-    team_occurrences = []  # list of (position, name)
+    logger.info(f"Liquipedia: found {len(match_blocks)} match blocks")
 
-    for m in team_pattern_a.finditer(html):
-        team_occurrences.append((m.start(), m.group(1)))
-    for m in team_pattern_b.finditer(html):
-        team_occurrences.append((m.start(), m.group(1)))
-
-    # If we found no teams with patterns a/b, try pattern c
-    if not team_occurrences:
-        for m in team_pattern_c.finditer(html):
-            team_occurrences.append((m.start(), m.group(1)))
-
-    # Sort by position in HTML
-    team_occurrences.sort(key=lambda x: x[0])
-
-    logger.info(f"Liquipedia: found {len(team_occurrences)} team name occurrences")
-
-    if len(team_occurrences) < 2:
-        # Last resort: try to find team names in any <a> with title inside
-        # match-related containers
-        generic_teams = re.findall(
-            r'class="[^"]*(?:team|opponent)[^"]*"[^>]*>.*?'
-            r'<a[^>]*title="([^"]+)"',
-            html,
-            re.DOTALL,
-        )
-        logger.info(
-            f"Liquipedia fallback: found {len(generic_teams)} team names"
-        )
-        for i, name in enumerate(generic_teams):
-            team_occurrences.append((i * 1000, name))
-
-    if len(team_occurrences) < 2:
+    if not match_blocks:
         return []
 
-    # ---- Find all timestamps ----
-    timestamps = []  # list of (position, unix_timestamp)
-    for m in re.finditer(r'data-timestamp="(\d+)"', html):
-        timestamps.append((m.start(), int(m.group(1))))
-
-    # ---- Find all tournament/league names ----
-    tournaments = []  # list of (position, name)
+    # ---- Track current tournament from section headers ----
+    # Section headers appear between match blocks in the full HTML.
+    # Find all section headers with positions.
+    section_headers = []
     for m in re.finditer(
-        r'<a[^>]*title="([^"]+)"[^>]*>[^<]*</a>',
+        r'<div\s+class="match-section-header"[^>]*>.*?'
+        r'<a[^>]*title="([^"]+)"',
         html,
+        re.DOTALL,
     ):
-        name = m.group(1)
-        # Filter out team names and special pages
-        if name.startswith("Special:") or name.startswith("Category:"):
-            continue
-        # Check if this looks like a tournament
-        tournaments.append((m.start(), name))
+        section_headers.append((m.start(), m.group(1)))
 
-    # ---- Pair teams into matches ----
+    # Also find positions of each match block in the original HTML
+    block_positions = []
+    search_start = 0
+    for block in match_blocks:
+        pos = html.find(block[:100], search_start)
+        block_positions.append(pos if pos >= 0 else search_start)
+        search_start = pos + 1 if pos >= 0 else search_start + 1
+
+    # ---- Parse each match block ----
     matches = []
-    team_names_set = {name for _, name in team_occurrences}
 
-    i = 0
-    while i < len(team_occurrences) - 1:
-        pos1, team1 = team_occurrences[i]
-        pos2, team2 = team_occurrences[i + 1]
+    for idx, block in enumerate(match_blocks):
+        # Extract team names from <a> tags inside block-team divs
+        # The title attribute of <a> inside team-template-image-icon has the team name
+        teams = re.findall(
+            r'<div\s+class="block-team[^"]*"[^>]*>.*?'
+            r'<a[^>]*\btitle="([^"]+)"',
+            block,
+            re.DOTALL,
+        )
 
-        # Skip if same team appears twice (might be a header/logo)
-        if team1 == team2:
-            i += 1
+        if len(teams) < 2:
+            # Fallback: find any <a> with title inside the block
+            # that's near a team-template class
+            teams = re.findall(
+                r'team-template-image-icon[^>]*>\s*'
+                r'<a[^>]*\btitle="([^"]+)"',
+                block,
+                re.DOTALL,
+            )
+
+        if len(teams) < 2:
             continue
 
-        i += 2  # Move to next pair
+        team1 = teams[0]
+        team2 = teams[1]
 
-        # Find nearest timestamp (between the two team positions or shortly after)
-        start_time = 0
-        search_start = pos1
-        search_end = pos2 + 2000  # Look up to 2000 chars after team2
-        for ts_pos, ts_val in timestamps:
-            if search_start <= ts_pos <= search_end:
-                start_time = ts_val
-                break
+        # Skip if same team (shouldn't happen)
+        if team1 == team2:
+            continue
+
+        # Extract timestamp
+        ts_match = re.search(r'data-timestamp="(\d+)"', block)
+        start_time = int(ts_match.group(1)) if ts_match else 0
 
         # Skip old matches (more than 6h ago)
         if start_time and start_time < now - 6 * 3600:
             continue
 
-        # Find nearest tournament name (before team1, within 3000 chars)
+        # Determine current tournament from nearest section header before this block
         league = "Unknown"
-        best_dist = float("inf")
-        for t_pos, t_name in tournaments:
-            if t_name in team_names_set:
-                continue  # Skip team names
-            dist = pos1 - t_pos
-            if 0 < dist < 3000 and dist < best_dist:
-                best_dist = dist
-                league = t_name
+        block_pos = block_positions[idx] if idx < len(block_positions) else 0
+        for hdr_pos, hdr_name in reversed(section_headers):
+            if hdr_pos < block_pos:
+                league = hdr_name
+                break
 
-        # If no tournament found before, look after
+        # If no section header found, try to find tournament link inside block
         if league == "Unknown":
-            for t_pos, t_name in tournaments:
-                if t_name in team_names_set:
-                    continue
-                dist = t_pos - pos1
-                if 0 < dist < 2000 and dist < best_dist:
-                    best_dist = dist
-                    league = t_name
+            tourn_match = re.search(
+                r'<a[^>]*title="([^"]+(?:League|Major|Minor|Championship|'
+                r'Tournament|Cup|Series|DPC|Masters|Division|Season|'
+                r'Qualifier|Invitational|Circuit|Pro)[^"]*)"',
+                block,
+                re.IGNORECASE,
+            )
+            if tourn_match:
+                league = tourn_match.group(1)
 
         # Determine status
         if start_time and start_time <= now:
