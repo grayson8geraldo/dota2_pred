@@ -104,18 +104,23 @@ class MatchPredictor:
             )
 
     def find_team_by_name(self, name: str) -> Optional[dict]:
-        """Search for a team by name using the teams endpoint."""
-        teams = self.client.get_teams()
-        if not teams:
+        """Search for a team by name using the teams endpoint.
+
+        The team list is fetched once and cached for the session.
+        """
+        if not hasattr(self, "_teams_list") or self._teams_list is None:
+            self._teams_list = self.client.get_teams() or []
+
+        if not self._teams_list:
             return None
 
         name_lower = name.lower().strip()
         # Exact match first
-        for t in teams:
+        for t in self._teams_list:
             if t.get("name", "").lower() == name_lower or t.get("tag", "").lower() == name_lower:
                 return t
         # Partial match
-        for t in teams:
+        for t in self._teams_list:
             if name_lower in t.get("name", "").lower() or name_lower in t.get("tag", "").lower():
                 return t
         return None
@@ -275,27 +280,35 @@ class MatchPredictor:
     def predict_today_matches(self, min_rating: int = 0, show_all: bool = False) -> list[dict]:
         """
         Predict matches scheduled for today.
-        Uses recent pro matches from OpenDota to find today's games
-        and upcoming matches from live endpoint.
+
+        Sources (in order):
+        1. OpenDota /live  — currently in-progress matches
+        2. OpenDota /proMatches (paginated) — recently completed today
+        3. Upcoming match API (Liquipedia-based) — scheduled matches
 
         Args:
             min_rating: Minimum team rating to include (both teams must meet).
                         0 means use config.MIN_TEAM_RATING.
             show_all: If True, ignore rating filter and show all matches.
         """
-        import datetime
+        from datetime import datetime, timezone, timedelta
+        from upcoming_matches import fetch_upcoming_matches
 
         if not min_rating:
             min_rating = config.MIN_TEAM_RATING
 
-        today = datetime.date.today()
-        today_start = int(datetime.datetime.combine(today, datetime.time.min).timestamp())
-        today_end = int(datetime.datetime.combine(today, datetime.time.max).timestamp())
+        # Use UTC for all timestamp comparisons
+        now_utc = datetime.now(timezone.utc)
+        today_start_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end_utc = today_start_utc + timedelta(days=1)
+        ts_start = int(today_start_utc.timestamp())
+        ts_end = int(today_end_utc.timestamp())
 
-        seen_pairs = set()
-        match_list = []
+        seen_pairs: set[tuple[int, int]] = set()
+        match_list: list[dict] = []
 
-        # 1) Gather live matches
+        # ---- Source 1: Live matches ----
+        logger.info("Fetching live matches...")
         live = self.client.get_live_matches() or []
         for m in live:
             rad = m.get("radiant_team", {})
@@ -317,12 +330,15 @@ class MatchPredictor:
                 "status": "LIVE",
                 "match_data": {"players": m.get("players", [])},
             })
+        logger.info(f"  Live matches with team data: {len(match_list)}")
 
-        # 2) Gather today's pro matches
-        pro_matches = self.client.get_pro_matches() or []
+        # ---- Source 2: Pro matches (paginated, today only) ----
+        logger.info("Fetching recent pro matches (paginated)...")
+        pro_matches = self.client.get_pro_matches_paginated(pages=3)
+        pro_added = 0
         for m in pro_matches:
             start = m.get("start_time", 0)
-            if start < today_start or start > today_end:
+            if start < ts_start or start > ts_end:
                 continue
             rad_id = m.get("radiant_team_id")
             dire_id = m.get("dire_team_id")
@@ -341,8 +357,50 @@ class MatchPredictor:
                 "status": "TODAY",
                 "match_data": {},
             })
+            pro_added += 1
+        logger.info(f"  Pro matches played today: {pro_added}")
 
-        # 3) Filter by team rating (unless --all)
+        # ---- Source 3: Upcoming scheduled matches ----
+        logger.info("Fetching upcoming scheduled matches...")
+        upcoming = fetch_upcoming_matches()
+        upcoming_added = 0
+        for um in upcoming:
+            team1_name = um["team1"]
+            team2_name = um["team2"]
+
+            # Resolve team names to OpenDota IDs
+            t1_info = self.find_team_by_name(team1_name)
+            t2_info = self.find_team_by_name(team2_name)
+
+            if not t1_info or not t2_info:
+                logger.debug(
+                    f"Could not resolve upcoming match: {team1_name} vs {team2_name}"
+                )
+                continue
+
+            t1_id = t1_info["team_id"]
+            t2_id = t2_info["team_id"]
+            pair = (min(t1_id, t2_id), max(t1_id, t2_id))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+
+            status = um.get("status", "UPCOMING")
+            match_list.append({
+                "radiant_team_id": t1_id,
+                "dire_team_id": t2_id,
+                "radiant_name": t1_info.get("name", team1_name),
+                "dire_name": t2_info.get("name", team2_name),
+                "league": um.get("league", "Unknown"),
+                "status": status,
+                "match_data": {},
+                "_start_time": um.get("start_time", 0),
+            })
+            upcoming_added += 1
+        logger.info(f"  Upcoming scheduled matches resolved: {upcoming_added}")
+        logger.info(f"  Total matches before filtering: {len(match_list)}")
+
+        # ---- Filter by team rating (unless --all) ----
         if not show_all:
             filtered = []
             for entry in match_list:
@@ -360,12 +418,22 @@ class MatchPredictor:
                         f"Skipping {entry['radiant_name']} vs {entry['dire_name']} "
                         f"(avg rating {avg_rating:.0f} < {min_rating})"
                     )
+            logger.info(
+                f"  After rating filter (>= {min_rating}): "
+                f"{len(filtered)}/{len(match_list)}"
+            )
             match_list = filtered
 
-        # 4) Sort by average team rating (best matches first)
-        match_list.sort(key=lambda e: e.get("_avg_rating", 0), reverse=True)
+        # ---- Sort: LIVE first, then by avg rating descending ----
+        status_order = {"LIVE": 0, "UPCOMING": 1, "TODAY": 2}
+        match_list.sort(
+            key=lambda e: (
+                status_order.get(e.get("status", ""), 9),
+                -e.get("_avg_rating", 0),
+            )
+        )
 
-        # 5) Predict each pair
+        # ---- Predict each pair ----
         predictions = []
         for entry in match_list:
             try:
@@ -377,8 +445,13 @@ class MatchPredictor:
                 pred["league"] = entry["league"]
                 pred["status"] = entry["status"]
                 pred["avg_team_rating"] = entry.get("_avg_rating", 0)
+                if entry.get("_start_time"):
+                    pred["start_time"] = entry["_start_time"]
                 predictions.append(pred)
             except Exception as e:
-                logger.error(f"Error predicting {entry['radiant_name']} vs {entry['dire_name']}: {e}")
+                logger.error(
+                    f"Error predicting {entry['radiant_name']} vs "
+                    f"{entry['dire_name']}: {e}"
+                )
 
         return predictions

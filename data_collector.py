@@ -70,6 +70,25 @@ class OpenDotaClient:
         result = self._get("/proMatches", params)
         return result if result else []
 
+    def get_pro_matches_paginated(self, pages: int = 3) -> list[dict]:
+        """Fetch multiple pages of recent pro matches for broader coverage.
+
+        Each page returns ~100 matches. Default 3 pages = ~300 matches,
+        covering roughly the last 2-3 days of pro matches.
+        """
+        all_matches = []
+        last_match_id = None
+
+        for page in range(pages):
+            batch = self.get_pro_matches(less_than_match_id=last_match_id)
+            if not batch:
+                break
+            all_matches.extend(batch)
+            # Get the smallest match_id to paginate backwards
+            last_match_id = min(m.get("match_id", float("inf")) for m in batch)
+
+        return all_matches
+
     def get_match_details(self, match_id: int) -> Optional[dict]:
         """Fetch detailed match data."""
         return self._get(f"/matches/{match_id}")

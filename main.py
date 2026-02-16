@@ -197,6 +197,8 @@ def cmd_team(args):
 
 def cmd_today(args):
     """Predict all matches scheduled for today."""
+    from datetime import datetime, timezone
+
     predictor = MatchPredictor(use_ml_model=True)
 
     show_all = getattr(args, "all", False)
@@ -207,6 +209,9 @@ def cmd_today(args):
     else:
         print(f"\nFetching today's matches (min avg rating: {min_rating or config.MIN_TEAM_RATING})...")
         print("  Use --all to include low-tier matches\n")
+
+    print("  Sources: OpenDota (live + pro), Liquipedia (upcoming)")
+    print("  This may take a minute...\n")
 
     predictions = predictor.predict_today_matches(
         min_rating=min_rating,
@@ -229,18 +234,33 @@ def cmd_today(args):
         by_league.setdefault(league, []).append(p)
 
     total = len(predictions)
+    live_count = sum(1 for p in predictions if p.get("status") == "LIVE")
+    upcoming_count = sum(1 for p in predictions if p.get("status") == "UPCOMING")
     high = sum(1 for p in predictions if p["confidence"] == "HIGH")
     medium = sum(1 for p in predictions if p["confidence"] == "MEDIUM")
 
     print(f"\n{'=' * 60}")
     print(f"  TODAY'S PREDICTIONS  ({total} matches)")
+    if live_count:
+        print(f"  Live: {live_count}  |  Upcoming: {upcoming_count}  |  Completed: {total - live_count - upcoming_count}")
     print(f"  High confidence: {high}  |  Medium: {medium}  |  Low: {total - high - medium}")
     print(f"{'=' * 60}")
 
     for league, preds in by_league.items():
         print(f"\n  --- {league} ---")
         for pred in preds:
-            status_tag = f" [{pred.get('status', '')}]" if pred.get("status") else ""
+            status = pred.get("status", "")
+            status_tag = f" [{status}]" if status else ""
+
+            # Show scheduled start time for upcoming matches
+            time_tag = ""
+            if pred.get("start_time"):
+                try:
+                    st = datetime.fromtimestamp(pred["start_time"], tz=timezone.utc)
+                    time_tag = f" @ {st.strftime('%H:%M UTC')}"
+                except (ValueError, OSError):
+                    pass
+
             conf_mark = {
                 "HIGH": "+++",
                 "MEDIUM": "++ ",
@@ -255,7 +275,7 @@ def cmd_today(args):
             avg_r = pred.get("avg_team_rating", 0)
             rating_tag = f"  (avg {avg_r:.0f})" if avg_r else ""
 
-            print(f"  {conf_mark}  {rad} vs {dire}{status_tag}{rating_tag}")
+            print(f"  {conf_mark}  {rad} vs {dire}{status_tag}{time_tag}{rating_tag}")
             print(f"        -> {winner} ({prob:.1%})  [{pred['confidence']}]")
 
     # Detailed output for high-confidence picks
