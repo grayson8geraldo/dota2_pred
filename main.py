@@ -7,6 +7,7 @@ recent form, head-to-head records, hero draft analysis, and more.
 
 Usage:
     python main.py predict <radiant_team> <dire_team> [--format BO1|BO3|BO5]
+    python main.py today
     python main.py live
     python main.py train [--matches N]
     python main.py team <team_name>
@@ -193,6 +194,64 @@ def cmd_team(args):
     print()
 
 
+def cmd_today(args):
+    """Predict all matches scheduled for today."""
+    predictor = MatchPredictor(use_ml_model=True)
+
+    print("\nFetching today's matches...")
+    predictions = predictor.predict_today_matches()
+
+    if not predictions:
+        print("  No professional matches found for today.")
+        print("  Try 'python main.py live' when matches are being played,")
+        print("  or 'python main.py predict <team1> <team2>' for a manual prediction.")
+        return
+
+    # Group by league
+    by_league = {}
+    for p in predictions:
+        league = p.get("league", "Unknown")
+        by_league.setdefault(league, []).append(p)
+
+    total = len(predictions)
+    high = sum(1 for p in predictions if p["confidence"] == "HIGH")
+    medium = sum(1 for p in predictions if p["confidence"] == "MEDIUM")
+
+    print(f"\n{'=' * 60}")
+    print(f"  TODAY'S PREDICTIONS  ({total} matches)")
+    print(f"  High confidence: {high}  |  Medium: {medium}  |  Low: {total - high - medium}")
+    print(f"{'=' * 60}")
+
+    for league, preds in by_league.items():
+        print(f"\n  --- {league} ---")
+        for pred in preds:
+            status_tag = f" [{pred.get('status', '')}]" if pred.get("status") else ""
+            conf_mark = {
+                "HIGH": "+++",
+                "MEDIUM": "++ ",
+                "LOW": "+  ",
+            }.get(pred["confidence"], "   ")
+
+            winner = pred["predicted_winner"]
+            prob = pred["win_probability"]
+            rad = pred["radiant_team"]
+            dire = pred["dire_team"]
+
+            print(f"  {conf_mark}  {rad} vs {dire}{status_tag}")
+            print(f"        -> {winner} ({prob:.1%})  [{pred['confidence']}]")
+
+    # Detailed output for high-confidence picks
+    high_conf = [p for p in predictions if p["confidence"] == "HIGH"]
+    if high_conf:
+        print(f"\n{'=' * 60}")
+        print(f"  TOP PICKS (HIGH CONFIDENCE)")
+        print(f"{'=' * 60}")
+        for pred in sorted(high_conf, key=lambda x: x["win_probability"], reverse=True):
+            print(format_prediction(pred))
+
+    predictor.save_caches()
+
+
 def cmd_refresh(args):
     """Refresh cached hero and team data."""
     predictor = MatchPredictor(use_ml_model=False)
@@ -210,6 +269,7 @@ def main():
 Examples:
   python main.py predict "Team Spirit" "Tundra Esports" --format BO3
   python main.py predict "Gaimin Gladiators" "BetBoom Team"
+  python main.py today
   python main.py live
   python main.py train --matches 300
   python main.py team "Team Spirit"
@@ -241,6 +301,10 @@ Examples:
     p_team = subparsers.add_parser("team", help="Look up team info")
     p_team.add_argument("name", help="Team name to look up")
     p_team.set_defaults(func=cmd_team)
+
+    # today
+    p_today = subparsers.add_parser("today", help="Predict all of today's matches")
+    p_today.set_defaults(func=cmd_today)
 
     # refresh
     p_refresh = subparsers.add_parser("refresh", help="Refresh cached data")

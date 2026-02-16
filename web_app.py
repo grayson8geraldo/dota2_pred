@@ -91,6 +91,15 @@ def api_live():
     return jsonify(predictions)
 
 
+@app.route("/api/today", methods=["GET"])
+def api_today():
+    """Predict all of today's matches."""
+    predictor = get_predictor()
+    predictions = predictor.predict_today_matches()
+    predictor.save_caches()
+    return jsonify(predictions)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)

@@ -482,6 +482,7 @@
     <!-- Tabs -->
     <div class="tabs">
         <button class="tab active" data-tab="predict">Predict Match</button>
+        <button class="tab" data-tab="today">Today's Matches</button>
         <button class="tab" data-tab="live">Live Matches</button>
         <button class="tab" data-tab="team">Team Lookup</button>
     </div>
@@ -521,6 +522,20 @@
         </div>
 
         <div class="result" id="predict-result"></div>
+    </div>
+
+    <!-- Today Tab -->
+    <div class="tab-content" id="tab-today">
+        <div style="text-align:center;margin-bottom:20px;">
+            <button class="predict-btn" id="today-btn" style="display:inline-block;">Load Today's Matches</button>
+        </div>
+        <div class="loading" id="today-loading">
+            <div class="spinner"></div>
+            <p>Analyzing today's matches...</p>
+        </div>
+        <div class="error-msg" id="today-error"></div>
+        <div id="today-summary" style="display:none;text-align:center;margin-bottom:20px;"></div>
+        <div class="live-list" id="today-list"></div>
     </div>
 
     <!-- Live Tab -->
@@ -676,6 +691,95 @@ function renderPrediction(d) {
 
 function factorRow(label, value) {
     return `<div class="factor-row"><span class="factor-label">${esc(String(label))}</span><span class="factor-value">${esc(String(value))}</span></div>`;
+}
+
+// --- Today ---
+document.getElementById('today-btn').addEventListener('click', loadToday);
+
+async function loadToday() {
+    hideError('today-error');
+    document.getElementById('today-loading').classList.add('show');
+    document.getElementById('today-btn').disabled = true;
+    document.getElementById('today-summary').style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/today');
+        const data = await resp.json();
+
+        const list = document.getElementById('today-list');
+        const summary = document.getElementById('today-summary');
+
+        if (!data.length) {
+            list.innerHTML = '<div class="live-empty"><p>No professional matches found for today.</p><p style="margin-top:8px">Try "Predict Match" to manually enter a matchup.</p></div>';
+        } else {
+            const high = data.filter(d => d.confidence === 'HIGH').length;
+            const med = data.filter(d => d.confidence === 'MEDIUM').length;
+            const low = data.length - high - med;
+
+            summary.innerHTML = `
+                <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;display:inline-flex;gap:24px;">
+                    <span><strong>${data.length}</strong> matches</span>
+                    <span style="color:var(--green)"><strong>${high}</strong> high conf.</span>
+                    <span style="color:var(--yellow)"><strong>${med}</strong> medium</span>
+                    <span style="color:var(--red)"><strong>${low}</strong> low</span>
+                </div>`;
+            summary.style.display = 'block';
+
+            // Sort: HIGH first, then by probability
+            data.sort((a, b) => {
+                const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+                const diff = (order[a.confidence] || 2) - (order[b.confidence] || 2);
+                if (diff !== 0) return diff;
+                return b.win_probability - a.win_probability;
+            });
+
+            list.innerHTML = data.map(d => {
+                const radPct = (d.radiant_win_prob * 100).toFixed(1);
+                const direPct = (d.dire_win_prob * 100).toFixed(1);
+                const confClass = d.confidence === 'HIGH' ? 'high' : d.confidence === 'MEDIUM' ? 'medium' : 'low';
+                const statusBadge = d.status === 'LIVE' ? ' <span style="color:var(--red);font-weight:700;">LIVE</span>' : '';
+                return `
+                    <div class="result-card">
+                        <div class="result-header ${confClass}">
+                            ${esc(d.league || 'Unknown')}${statusBadge} &mdash;
+                            ${esc(d.predicted_winner)} (${(d.win_probability*100).toFixed(1)}%)
+                            [${d.confidence}]
+                        </div>
+                        <div class="result-body">
+                            <div class="teams-result">
+                                <div class="team-box radiant ${d.radiant_win_prob >= 0.5 ? 'winner' : ''}">
+                                    ${d.radiant_win_prob >= 0.5 ? '<div class="winner-badge">Winner</div>' : ''}
+                                    <div class="team-side">Radiant</div>
+                                    <div class="team-name">${esc(d.radiant_team)}</div>
+                                    <div class="prob">${radPct}%</div>
+                                </div>
+                                <div class="team-box dire ${d.dire_win_prob > 0.5 ? 'winner' : ''}">
+                                    ${d.dire_win_prob > 0.5 ? '<div class="winner-badge">Winner</div>' : ''}
+                                    <div class="team-side">Dire</div>
+                                    <div class="team-name">${esc(d.dire_team)}</div>
+                                    <div class="prob">${direPct}%</div>
+                                </div>
+                            </div>
+                            <div class="prob-bar-container">
+                                <div class="prob-bar">
+                                    <div class="radiant-fill" style="width:${radPct}%"></div>
+                                    <div class="dire-fill" style="width:${direPct}%"></div>
+                                </div>
+                                <div class="prob-labels">
+                                    <span>${esc(d.radiant_team)} ${radPct}%</span>
+                                    <span>${direPct}% ${esc(d.dire_team)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+    } catch (err) {
+        showError('today-error', 'Failed to load: ' + err.message);
+    } finally {
+        document.getElementById('today-loading').classList.remove('show');
+        document.getElementById('today-btn').disabled = false;
+    }
 }
 
 // --- Live ---
