@@ -41,3 +41,8 @@ TEAM_CACHE_FILE = "team_cache.json"
 # Prediction thresholds
 HIGH_CONFIDENCE_THRESHOLD = 0.65  # Above this = high confidence prediction
 LOW_CONFIDENCE_THRESHOLD = 0.55   # Below this = skip/low confidence
+
+# Team tier filtering for "today" command
+MIN_TEAM_RATING = 1100  # Minimum team rating to include in today's predictions
+# Teams below this are typically tier-3+ amateur teams
+# Tier 1 teams: ~1400+, Tier 2: ~1200-1400, Tier 3: ~1100-1200

@@ -21,6 +21,7 @@ import sys
 
 from tabulate import tabulate
 
+import config
 from predictor import MatchPredictor
 from train import train_model
 
@@ -198,13 +199,27 @@ def cmd_today(args):
     """Predict all matches scheduled for today."""
     predictor = MatchPredictor(use_ml_model=True)
 
-    print("\nFetching today's matches...")
-    predictions = predictor.predict_today_matches()
+    show_all = getattr(args, "all", False)
+    min_rating = getattr(args, "min_rating", 0)
+
+    if show_all:
+        print("\nFetching ALL today's matches (no rating filter)...")
+    else:
+        print(f"\nFetching today's matches (min avg rating: {min_rating or config.MIN_TEAM_RATING})...")
+        print("  Use --all to include low-tier matches\n")
+
+    predictions = predictor.predict_today_matches(
+        min_rating=min_rating,
+        show_all=show_all,
+    )
 
     if not predictions:
-        print("  No professional matches found for today.")
-        print("  Try 'python main.py live' when matches are being played,")
-        print("  or 'python main.py predict <team1> <team2>' for a manual prediction.")
+        if not show_all:
+            print("  No matches from notable teams found for today.")
+            print("  Try --all to see all matches, or --min-rating 900 to lower the bar.")
+        else:
+            print("  No professional matches found for today.")
+        print("  Or use 'python main.py predict <team1> <team2>' for a manual prediction.")
         return
 
     # Group by league
@@ -237,7 +252,10 @@ def cmd_today(args):
             rad = pred["radiant_team"]
             dire = pred["dire_team"]
 
-            print(f"  {conf_mark}  {rad} vs {dire}{status_tag}")
+            avg_r = pred.get("avg_team_rating", 0)
+            rating_tag = f"  (avg {avg_r:.0f})" if avg_r else ""
+
+            print(f"  {conf_mark}  {rad} vs {dire}{status_tag}{rating_tag}")
             print(f"        -> {winner} ({prob:.1%})  [{pred['confidence']}]")
 
     # Detailed output for high-confidence picks
@@ -304,6 +322,10 @@ Examples:
 
     # today
     p_today = subparsers.add_parser("today", help="Predict all of today's matches")
+    p_today.add_argument("--all", action="store_true",
+                         help="Show all matches including low-tier teams")
+    p_today.add_argument("--min-rating", type=int, default=0,
+                         help="Minimum average team rating to include (default: 1100)")
     p_today.set_defaults(func=cmd_today)
 
     # refresh

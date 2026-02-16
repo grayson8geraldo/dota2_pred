@@ -94,8 +94,13 @@ def api_live():
 @app.route("/api/today", methods=["GET"])
 def api_today():
     """Predict all of today's matches."""
+    show_all = request.args.get("all", "").lower() in ("1", "true", "yes")
+    min_rating = int(request.args.get("min_rating", 0))
     predictor = get_predictor()
-    predictions = predictor.predict_today_matches()
+    predictions = predictor.predict_today_matches(
+        min_rating=min_rating,
+        show_all=show_all,
+    )
     predictor.save_caches()
     return jsonify(predictions)
 

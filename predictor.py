@@ -272,23 +272,31 @@ class MatchPredictor:
 
         return predictions
 
-    def predict_today_matches(self) -> list[dict]:
+    def predict_today_matches(self, min_rating: int = 0, show_all: bool = False) -> list[dict]:
         """
         Predict matches scheduled for today.
         Uses recent pro matches from OpenDota to find today's games
         and upcoming matches from live endpoint.
+
+        Args:
+            min_rating: Minimum team rating to include (both teams must meet).
+                        0 means use config.MIN_TEAM_RATING.
+            show_all: If True, ignore rating filter and show all matches.
         """
         import datetime
+
+        if not min_rating:
+            min_rating = config.MIN_TEAM_RATING
 
         today = datetime.date.today()
         today_start = int(datetime.datetime.combine(today, datetime.time.min).timestamp())
         today_end = int(datetime.datetime.combine(today, datetime.time.max).timestamp())
 
-        # 1) Gather live matches
-        live = self.client.get_live_matches() or []
-        live_pairs = set()
+        seen_pairs = set()
         match_list = []
 
+        # 1) Gather live matches
+        live = self.client.get_live_matches() or []
         for m in live:
             rad = m.get("radiant_team", {})
             dire = m.get("dire_team", {})
@@ -297,19 +305,20 @@ class MatchPredictor:
             if not rad_id or not dire_id:
                 continue
             pair = (min(rad_id, dire_id), max(rad_id, dire_id))
-            if pair not in live_pairs:
-                live_pairs.add(pair)
-                match_list.append({
-                    "radiant_team_id": rad_id,
-                    "dire_team_id": dire_id,
-                    "radiant_name": rad.get("team_name", f"Team {rad_id}"),
-                    "dire_name": dire.get("team_name", f"Team {dire_id}"),
-                    "league": m.get("league", {}).get("name", "Unknown"),
-                    "status": "LIVE",
-                    "match_data": {"players": m.get("players", [])},
-                })
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            match_list.append({
+                "radiant_team_id": rad_id,
+                "dire_team_id": dire_id,
+                "radiant_name": rad.get("team_name", f"Team {rad_id}"),
+                "dire_name": dire.get("team_name", f"Team {dire_id}"),
+                "league": m.get("league", {}).get("name", "Unknown"),
+                "status": "LIVE",
+                "match_data": {"players": m.get("players", [])},
+            })
 
-        # 2) Gather today's completed/recent pro matches for more pairs
+        # 2) Gather today's pro matches
         pro_matches = self.client.get_pro_matches() or []
         for m in pro_matches:
             start = m.get("start_time", 0)
@@ -320,19 +329,43 @@ class MatchPredictor:
             if not rad_id or not dire_id:
                 continue
             pair = (min(rad_id, dire_id), max(rad_id, dire_id))
-            if pair not in live_pairs:
-                live_pairs.add(pair)
-                match_list.append({
-                    "radiant_team_id": rad_id,
-                    "dire_team_id": dire_id,
-                    "radiant_name": m.get("radiant_name", f"Team {rad_id}"),
-                    "dire_name": m.get("dire_name", f"Team {dire_id}"),
-                    "league": m.get("league_name", "Unknown"),
-                    "status": "TODAY",
-                    "match_data": {},
-                })
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            match_list.append({
+                "radiant_team_id": rad_id,
+                "dire_team_id": dire_id,
+                "radiant_name": m.get("radiant_name", f"Team {rad_id}"),
+                "dire_name": m.get("dire_name", f"Team {dire_id}"),
+                "league": m.get("league_name", "Unknown"),
+                "status": "TODAY",
+                "match_data": {},
+            })
 
-        # 3) Predict each unique pair
+        # 3) Filter by team rating (unless --all)
+        if not show_all:
+            filtered = []
+            for entry in match_list:
+                rad_data = self.get_team_data(entry["radiant_team_id"])
+                dire_data = self.get_team_data(entry["dire_team_id"])
+                rad_rating = rad_data.get("info", {}).get("rating", 0) or 0
+                dire_rating = dire_data.get("info", {}).get("rating", 0) or 0
+                avg_rating = (rad_rating + dire_rating) / 2
+
+                if avg_rating >= min_rating:
+                    entry["_avg_rating"] = avg_rating
+                    filtered.append(entry)
+                else:
+                    logger.debug(
+                        f"Skipping {entry['radiant_name']} vs {entry['dire_name']} "
+                        f"(avg rating {avg_rating:.0f} < {min_rating})"
+                    )
+            match_list = filtered
+
+        # 4) Sort by average team rating (best matches first)
+        match_list.sort(key=lambda e: e.get("_avg_rating", 0), reverse=True)
+
+        # 5) Predict each pair
         predictions = []
         for entry in match_list:
             try:
@@ -343,6 +376,7 @@ class MatchPredictor:
                 )
                 pred["league"] = entry["league"]
                 pred["status"] = entry["status"]
+                pred["avg_team_rating"] = entry.get("_avg_rating", 0)
                 predictions.append(pred)
             except Exception as e:
                 logger.error(f"Error predicting {entry['radiant_name']} vs {entry['dire_name']}: {e}")
