@@ -262,6 +262,10 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
         return []
 
     # ---- Collect tournament section headers with positions ----
+    # Filter out false positives like timezone strings ("Central European Time")
+    _TIMEZONE_RE = re.compile(
+        r'(?i)time\b|UTC|GMT|timezone|daylight|standard time', re.IGNORECASE
+    )
     section_headers = []
     for m in re.finditer(
         r'<div\s+class="match-section-header"[^>]*>.*?'
@@ -269,7 +273,9 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
         html,
         re.DOTALL,
     ):
-        section_headers.append((m.start(), m.group(1)))
+        name = m.group(1)
+        if not _TIMEZONE_RE.search(name):
+            section_headers.append((m.start(), name))
 
     # Find position of each match block in the original HTML
     block_positions = []
@@ -353,6 +359,10 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
             if tourn_match:
                 league = tourn_match.group(1)
 
+        # Extract best-of format (e.g. "(Bo2)", "Bo3")
+        bo_match = re.search(r'(?i)\bBo(\d)\b', block)
+        best_of = int(bo_match.group(1)) if bo_match else None
+
         # Determine status
         if start_time and start_time <= now:
             status = "LIVE"
@@ -364,6 +374,7 @@ def _parse_liquipedia_ticker(html: str) -> list[dict]:
             "team2": team2,
             "league": league,
             "start_time": start_time,
+            "best_of": best_of,
             "status": status,
         })
 

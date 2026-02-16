@@ -45,7 +45,7 @@ def api_predict():
     if not radiant or not dire:
         return jsonify({"error": "Both team names are required"}), 400
 
-    format_map = {"BO1": 0, "BO3": 1, "BO5": 2}
+    format_map = {"BO1": 0, "BO2": 3, "BO3": 1, "BO5": 2}
     series_type = format_map.get(series_format, 1)
 
     predictor = get_predictor()

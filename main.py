@@ -6,7 +6,7 @@ Predicts outcomes of professional Dota 2 matches using team statistics,
 recent form, head-to-head records, hero draft analysis, and more.
 
 Usage:
-    python main.py predict <radiant_team> <dire_team> [--format BO1|BO3|BO5]
+    python main.py predict <radiant_team> <dire_team> [--format BO1|BO2|BO3|BO5]
     python main.py today
     python main.py live
     python main.py train [--matches N]
@@ -110,7 +110,7 @@ def cmd_predict(args):
     """Predict a match between two teams."""
     predictor = MatchPredictor(use_ml_model=True)
 
-    format_map = {"BO1": 0, "BO3": 1, "BO5": 2}
+    format_map = {"BO1": 0, "BO2": 3, "BO3": 1, "BO5": 2}
     series_type = format_map.get(args.format.upper(), 1)
 
     print(f"\nLooking up teams: {args.radiant} vs {args.dire}...")
@@ -321,7 +321,7 @@ Examples:
     p_pred = subparsers.add_parser("predict", help="Predict a match outcome")
     p_pred.add_argument("radiant", help="Radiant team name")
     p_pred.add_argument("dire", help="Dire team name")
-    p_pred.add_argument("--format", default="BO3", choices=["BO1", "BO3", "BO5"],
+    p_pred.add_argument("--format", default="BO3", choices=["BO1", "BO2", "BO3", "BO5"],
                         help="Match format (default: BO3)")
     p_pred.set_defaults(func=cmd_predict)
 

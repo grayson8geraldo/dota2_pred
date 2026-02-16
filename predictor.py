@@ -140,7 +140,7 @@ class MatchPredictor:
             radiant_team_id: OpenDota team ID for radiant
             dire_team_id: OpenDota team ID for dire
             match_data: Optional dict with picks_bans data for draft analysis
-            series_type: 0=BO1, 1=BO3, 2=BO5
+            series_type: 0=BO1, 1=BO3, 2=BO5, 3=BO2
             game_number: Game number in series
 
         Returns:
@@ -218,7 +218,7 @@ class MatchPredictor:
             "radiant_win_prob": round(probability, 4),
             "dire_win_prob": round(1 - probability, 4),
             "model_type": "ML Ensemble" if self.use_ml else "Heuristic",
-            "series_format": {0: "BO1", 1: "BO3", 2: "BO5"}.get(series_type, "BO3"),
+            "series_format": {0: "BO1", 1: "BO3", 2: "BO5", 3: "BO2"}.get(series_type, "BO3"),
             "breakdown": breakdown,
         }
 
@@ -392,6 +392,12 @@ class MatchPredictor:
             seen_pairs.add(pair)
 
             status = um.get("status", "UPCOMING")
+
+            # Convert best_of (1,2,3,5) to series_type (0,1,2,3)
+            best_of = um.get("best_of")
+            bo_to_st = {1: 0, 2: 3, 3: 1, 5: 2}
+            series_type = bo_to_st.get(best_of, 1)  # default BO3
+
             match_list.append({
                 "radiant_team_id": t1_id,
                 "dire_team_id": t2_id,
@@ -401,6 +407,7 @@ class MatchPredictor:
                 "status": status,
                 "match_data": {},
                 "_start_time": um.get("start_time", 0),
+                "_series_type": series_type,
             })
             upcoming_added += 1
         logger.info(f"  Upcoming scheduled matches resolved: {upcoming_added}")
@@ -447,6 +454,7 @@ class MatchPredictor:
                     radiant_team_id=entry["radiant_team_id"],
                     dire_team_id=entry["dire_team_id"],
                     match_data=entry.get("match_data", {}),
+                    series_type=entry.get("_series_type", 1),
                 )
                 pred["league"] = entry["league"]
                 pred["status"] = entry["status"]

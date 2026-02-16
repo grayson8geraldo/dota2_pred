@@ -291,19 +291,22 @@ def extract_format_features(
     game_number: int = 1,
 ) -> list[float]:
     """
-    Features based on match format (BO1/BO3/BO5) and game number in series.
+    Features based on match format (BO1/BO2/BO3/BO5) and game number in series.
 
-    series_type: 0=BO1, 1=BO3, 2=BO5
+    series_type: 0=BO1, 1=BO3, 2=BO5, 3=BO2
     game_number: which game in the series (1-indexed)
 
     Returns:
         [is_bo1, is_bo3, is_bo5, game_number_norm, is_decider]
+
+    Note: BO2 is treated as closest to BO3 for model compatibility
+    (all three binary flags are 0, so the model sees a neutral format signal).
     """
     is_bo1 = 1.0 if series_type == 0 else 0.0
     is_bo3 = 1.0 if series_type == 1 else 0.0
     is_bo5 = 1.0 if series_type == 2 else 0.0
 
-    max_games = {0: 1, 1: 3, 2: 5}.get(series_type, 3)
+    max_games = {0: 1, 1: 3, 2: 5, 3: 2}.get(series_type, 3)
     game_norm = game_number / max_games
     is_decider = 1.0 if game_number == max_games else 0.0
 
