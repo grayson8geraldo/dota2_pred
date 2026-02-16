@@ -242,7 +242,27 @@ def collect_hero_stats(client: OpenDotaClient) -> dict:
         hero_name_map[h["localized_name"].lower()] = h["id"]
         hero_name_map[str(h["id"])] = h["id"]
 
-    return {"heroes": hero_data, "name_map": hero_name_map}
+    # Collect hero-vs-hero matchup data (counter-picks)
+    # This is expensive (~145 API calls) so only done during refresh/train
+    matchup_data = {}
+    hero_ids = list(hero_data.keys())
+    logger.info(f"Collecting matchup data for {len(hero_ids)} heroes...")
+    for i, hid in enumerate(hero_ids):
+        mu_list = client.get_hero_matchups(hid)
+        if mu_list:
+            mu_dict = {}
+            for mu in mu_list:
+                opponent_id = mu.get("hero_id")
+                if opponent_id:
+                    mu_dict[opponent_id] = {
+                        "wins": mu.get("wins", 0),
+                        "games_played": mu.get("games_played", 0),
+                    }
+            matchup_data[hid] = mu_dict
+        if (i + 1) % 30 == 0:
+            logger.info(f"  Matchups collected: {i + 1}/{len(hero_ids)}")
+
+    return {"heroes": hero_data, "name_map": hero_name_map, "matchups": matchup_data}
 
 
 def save_data(data: dict, filepath: str):

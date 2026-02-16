@@ -263,11 +263,32 @@ def extract_draft_features(
     rad_syn = _pair_synergy(radiant_picks)
     dire_syn = _pair_synergy(dire_picks)
 
+    # Counter-pick advantage: how well does each team's draft perform vs opponents?
+    matchups = hero_stats.get("matchups", {})
+
+    def _counter_advantage(my_picks: list[int], enemy_picks: list[int]) -> float:
+        """Average winrate of my heroes against each enemy hero (from matchup data)."""
+        if not my_picks or not enemy_picks or not matchups:
+            return 0.0
+        wrs = []
+        for my_hid in my_picks:
+            hero_mu = matchups.get(my_hid, matchups.get(str(my_hid), {}))
+            for en_hid in enemy_picks:
+                mu = hero_mu.get(en_hid, hero_mu.get(str(en_hid)))
+                if mu and mu.get("games_played", 0) >= 10:
+                    wrs.append(mu["wins"] / mu["games_played"])
+        return (np.mean(wrs) - 0.5) if wrs else 0.0  # center around 0
+
+    rad_counter = _counter_advantage(radiant_picks, dire_picks)
+    dire_counter = _counter_advantage(dire_picks, radiant_picks)
+    counter_diff = rad_counter - dire_counter
+
     return [
         rad_wr, dire_wr, rad_wr - dire_wr,
         rad_syn, dire_syn,
         rad_roles, dire_roles,
         rad_pr, dire_pr,
+        counter_diff,
     ]
 
 
@@ -419,6 +440,7 @@ def get_feature_names() -> list[str]:
         "rad_synergy", "dire_synergy",
         "rad_roles_balanced", "dire_roles_balanced",
         "rad_avg_pro_pickrate", "dire_avg_pro_pickrate",
+        "counter_pick_advantage",
         # Map side
         "radiant_advantage", "first_pick_advantage",
         # Match format

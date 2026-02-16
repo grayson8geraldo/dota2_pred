@@ -33,13 +33,17 @@ logger = logging.getLogger(__name__)
 class MatchPredictor:
     """High-level interface for predicting Dota 2 matches."""
 
+    # Cache entries older than this are re-fetched from API
+    CACHE_TTL = 3600  # 1 hour
+
     def __init__(self, use_ml_model: bool = True):
         self.client = OpenDotaClient()
         self.ml_model = Dota2Predictor()
         self.heuristic = HeuristicPredictor()
         self.use_ml = use_ml_model
         self.hero_stats = None
-        self.team_cache = {}
+        self.team_cache = {}        # team_id -> team data
+        self._cache_timestamps = {}  # team_id -> fetch timestamp
         self._load_caches()
 
     def _load_caches(self):
@@ -68,9 +72,11 @@ class MatchPredictor:
         logger.info(f"Cached {len(self.hero_stats.get('heroes', {}))} heroes")
 
     def get_team_data(self, team_id: int, force_refresh: bool = False) -> dict:
-        """Get team data, fetching from API if not cached."""
+        """Get team data, fetching from API if not cached or stale."""
         if not force_refresh and team_id in self.team_cache:
-            return self.team_cache[team_id]
+            cached_at = self._cache_timestamps.get(team_id, 0)
+            if time.time() - cached_at < self.CACHE_TTL:
+                return self.team_cache[team_id]
 
         logger.info(f"Fetching data for team {team_id}...")
         team_info = self.client.get_team(team_id)
@@ -90,6 +96,7 @@ class MatchPredictor:
         }
 
         self.team_cache[team_id] = data
+        self._cache_timestamps[team_id] = time.time()
         return data
 
     def save_caches(self):
@@ -106,7 +113,10 @@ class MatchPredictor:
     def find_team_by_name(self, name: str) -> Optional[dict]:
         """Search for a team by name using the teams endpoint.
 
+        Strategy: exact name/tag -> partial match -> fuzzy match (>= 80 score).
         The team list is fetched once and cached for the session.
+        Only considers active teams (played in last 6 months) for fuzzy matching
+        to avoid matching defunct teams with similar names.
         """
         if not hasattr(self, "_teams_list") or self._teams_list is None:
             self._teams_list = self.client.get_teams() or []
@@ -115,14 +125,54 @@ class MatchPredictor:
             return None
 
         name_lower = name.lower().strip()
-        # Exact match first
+
+        # 1. Exact match on name or tag
         for t in self._teams_list:
             if t.get("name", "").lower() == name_lower or t.get("tag", "").lower() == name_lower:
                 return t
-        # Partial match
+
+        # 2. Partial match (query is substring of team name or vice versa)
         for t in self._teams_list:
-            if name_lower in t.get("name", "").lower() or name_lower in t.get("tag", "").lower():
+            t_name = t.get("name", "").lower()
+            t_tag = t.get("tag", "").lower()
+            if (name_lower in t_name or t_name in name_lower or
+                    name_lower in t_tag or t_tag in name_lower):
                 return t
+
+        # 3. Fuzzy match (handles typos, abbreviations, slight name variations)
+        try:
+            from thefuzz import fuzz
+        except ImportError:
+            return None
+
+        # Only consider teams with recent activity to avoid ghost matches
+        import time as _time
+        six_months_ago = _time.time() - 180 * 86400
+
+        best_score = 0
+        best_team = None
+        for t in self._teams_list:
+            # Skip teams with no recent matches
+            last_match = t.get("last_match_time")
+            if last_match and last_match < six_months_ago:
+                continue
+
+            t_name = t.get("name", "")
+            if not t_name:
+                continue
+
+            # token_sort_ratio handles word reordering ("Team Spirit" vs "Spirit Team")
+            score = fuzz.token_sort_ratio(name_lower, t_name.lower())
+            if score > best_score:
+                best_score = score
+                best_team = t
+
+        if best_score >= 80 and best_team:
+            logger.debug(
+                f"Fuzzy matched '{name}' -> '{best_team.get('name')}' (score={best_score})"
+            )
+            return best_team
+
         return None
 
     def predict_match(

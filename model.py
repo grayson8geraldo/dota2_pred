@@ -132,6 +132,23 @@ class Dota2Predictor:
         if not self.is_trained:
             raise RuntimeError("Model not trained. Call train() or load() first.")
 
+        # Handle feature count mismatch (e.g., 34-feature input with 33-feature model)
+        expected = self.scaler.n_features_in_
+        actual = X.shape[1]
+        if actual > expected:
+            logger.warning(
+                f"Feature count mismatch: got {actual}, model expects {expected}. "
+                f"Truncating extra features. Retrain to use all features."
+            )
+            X = X[:, :expected]
+        elif actual < expected:
+            logger.warning(
+                f"Feature count mismatch: got {actual}, model expects {expected}. "
+                f"Padding with zeros."
+            )
+            pad = np.zeros((X.shape[0], expected - actual))
+            X = np.hstack([X, pad])
+
         X_scaled = self.scaler.transform(X)
         predictions = self.ensemble.predict(X_scaled)
         probabilities = self.ensemble.predict_proba(X_scaled)[:, 1]
