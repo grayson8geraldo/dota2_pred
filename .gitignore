@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+model_data/
+*.joblib
+.env
