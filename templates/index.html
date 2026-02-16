@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dota 2 Match Predictor</title>
+    <style>
+        :root {
+            --bg: #0e0e12;
+            --card: #1a1a24;
+            --border: #2a2a3a;
+            --accent: #e44d26;
+            --accent2: #4fc3f7;
+            --green: #4caf50;
+            --red: #f44336;
+            --yellow: #ffb300;
+            --text: #e0e0e0;
+            --text2: #888;
+            --radiant: #92c347;
+            --dire: #c23c2a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            padding: 40px 20px 20px;
+            background: linear-gradient(180deg, #12121a 0%, var(--bg) 100%);
+        }
+
+        .header h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: var(--text2);
+            margin-top: 8px;
+            font-size: 0.95rem;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 24px;
+            background: var(--card);
+            border-radius: 12px;
+            padding: 4px;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            border: none;
+            background: transparent;
+            color: var(--text2);
+        }
+
+        .tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+        .tab.active { background: var(--accent); color: white; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Predict Form */
+        .predict-form {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+        }
+
+        .vs-layout {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 16px;
+            align-items: end;
+            margin-bottom: 24px;
+        }
+
+        .team-input label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+
+        .team-input.radiant label { color: var(--radiant); }
+        .team-input.dire label { color: var(--dire); }
+
+        .team-input input {
+            width: 100%;
+            padding: 14px 16px;
+            border-radius: 10px;
+            border: 2px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .team-input input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .vs-text {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--text2);
+            padding-bottom: 14px;
+            text-align: center;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 16px;
+            align-items: end;
+        }
+
+        .format-select {
+            flex: 1;
+        }
+
+        .format-select label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            color: var(--text2);
+        }
+
+        .format-options {
+            display: flex;
+            gap: 8px;
+        }
+
+        .format-btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: 2px solid var(--border);
+            background: var(--bg);
+            color: var(--text2);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .format-btn:hover { border-color: var(--accent); color: var(--text); }
+        .format-btn.active { border-color: var(--accent); background: var(--accent); color: white; }
+
+        .predict-btn {
+            flex: 1;
+            padding: 14px 32px;
+            border-radius: 10px;
+            border: none;
+            background: linear-gradient(135deg, var(--accent) 0%, #f4511e 100%);
+            color: white;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.2s;
+        }
+
+        .predict-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(228, 77, 38, 0.4);
+        }
+
+        .predict-btn:active { transform: translateY(0); }
+        .predict-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        /* Result */
+        .result {
+            margin-top: 24px;
+            display: none;
+        }
+
+        .result.show { display: block; }
+
+        .result-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .result-header {
+            padding: 20px 24px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+
+        .result-header.high { background: linear-gradient(135deg, rgba(76,175,80,0.2), rgba(76,175,80,0.05)); }
+        .result-header.medium { background: linear-gradient(135deg, rgba(255,179,0,0.2), rgba(255,179,0,0.05)); }
+        .result-header.low { background: linear-gradient(135deg, rgba(244,67,54,0.2), rgba(244,67,54,0.05)); }
+
+        .result-body { padding: 24px; }
+
+        .teams-result {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .team-box {
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 2px solid var(--border);
+            position: relative;
+        }
+
+        .team-box.winner {
+            border-color: var(--green);
+            background: rgba(76, 175, 80, 0.08);
+        }
+
+        .team-box .team-name {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .team-box .team-side {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+
+        .team-box.radiant .team-side { color: var(--radiant); }
+        .team-box.dire .team-side { color: var(--dire); }
+
+        .team-box .prob {
+            font-size: 2rem;
+            font-weight: 800;
+        }
+
+        .team-box.winner .prob { color: var(--green); }
+
+        .winner-badge {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            background: var(--green);
+            color: white;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 20px;
+            text-transform: uppercase;
+        }
+
+        /* Probability bar */
+        .prob-bar-container {
+            margin-bottom: 24px;
+        }
+
+        .prob-bar {
+            height: 12px;
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            background: var(--bg);
+        }
+
+        .prob-bar .radiant-fill {
+            background: linear-gradient(90deg, var(--radiant), #a8d648);
+            transition: width 0.6s ease;
+        }
+
+        .prob-bar .dire-fill {
+            background: linear-gradient(90deg, #d43f2f, var(--dire));
+            transition: width 0.6s ease;
+        }
+
+        .prob-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 6px;
+            font-size: 0.8rem;
+            color: var(--text2);
+        }
+
+        /* Factors */
+        .factors {
+            border-top: 1px solid var(--border);
+            padding-top: 20px;
+        }
+
+        .factors h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text2);
+            margin-bottom: 12px;
+        }
+
+        .factor-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 0.9rem;
+        }
+
+        .factor-label { color: var(--text2); }
+        .factor-value { font-weight: 600; }
+
+        /* Loading */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.show { display: block; }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Live */
+        .live-list { display: flex; flex-direction: column; gap: 16px; }
+
+        .live-empty {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text2);
+            background: var(--card);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+
+        /* Team lookup */
+        .team-search {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+        }
+
+        .search-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .search-row input {
+            flex: 1;
+            padding: 14px 16px;
+            border-radius: 10px;
+            border: 2px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 1rem;
+        }
+
+        .search-row input:focus { outline: none; border-color: var(--accent); }
+
+        .search-btn {
+            padding: 14px 24px;
+            border-radius: 10px;
+            border: none;
+            background: var(--accent2);
+            color: #000;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .search-btn:hover { opacity: 0.85; }
+
+        .team-info {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .team-info.show { display: block; }
+
+        .team-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+        }
+
+        .stat-box {
+            background: var(--bg);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-box .stat-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--accent2);
+        }
+
+        .stat-box .stat-label {
+            font-size: 0.75rem;
+            color: var(--text2);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        /* Error */
+        .error-msg {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid var(--red);
+            border-radius: 10px;
+            padding: 16px;
+            color: var(--red);
+            margin-top: 16px;
+            display: none;
+        }
+
+        .error-msg.show { display: block; }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .vs-layout {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+            .vs-text { padding: 0; }
+            .form-row { flex-direction: column; }
+            .teams-result { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>DOTA 2 PREDICTOR</h1>
+    <p>ML-powered match outcome predictions for professional Dota 2</p>
+</div>
+
+<div class="container">
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab active" data-tab="predict">Predict Match</button>
+        <button class="tab" data-tab="live">Live Matches</button>
+        <button class="tab" data-tab="team">Team Lookup</button>
+    </div>
+
+    <!-- Predict Tab -->
+    <div class="tab-content active" id="tab-predict">
+        <div class="predict-form">
+            <div class="vs-layout">
+                <div class="team-input radiant">
+                    <label>Radiant</label>
+                    <input type="text" id="radiant-name" placeholder="e.g. Team Spirit" autocomplete="off">
+                </div>
+                <div class="vs-text">VS</div>
+                <div class="team-input dire">
+                    <label>Dire</label>
+                    <input type="text" id="dire-name" placeholder="e.g. Tundra Esports" autocomplete="off">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="format-select">
+                    <label>Format</label>
+                    <div class="format-options">
+                        <button class="format-btn" data-format="BO1">BO1</button>
+                        <button class="format-btn active" data-format="BO3">BO3</button>
+                        <button class="format-btn" data-format="BO5">BO5</button>
+                    </div>
+                </div>
+                <button class="predict-btn" id="predict-btn">PREDICT</button>
+            </div>
+        </div>
+
+        <div class="error-msg" id="predict-error"></div>
+
+        <div class="loading" id="predict-loading">
+            <div class="spinner"></div>
+            <p>Analyzing teams and calculating prediction...</p>
+        </div>
+
+        <div class="result" id="predict-result"></div>
+    </div>
+
+    <!-- Live Tab -->
+    <div class="tab-content" id="tab-live">
+        <div style="text-align:center;margin-bottom:20px;">
+            <button class="predict-btn" id="live-btn" style="display:inline-block;">Load Live Matches</button>
+        </div>
+        <div class="loading" id="live-loading">
+            <div class="spinner"></div>
+            <p>Fetching live matches...</p>
+        </div>
+        <div class="error-msg" id="live-error"></div>
+        <div class="live-list" id="live-list"></div>
+    </div>
+
+    <!-- Team Tab -->
+    <div class="tab-content" id="tab-team">
+        <div class="team-search">
+            <div class="search-row">
+                <input type="text" id="team-name" placeholder="Enter team name..." autocomplete="off">
+                <button class="search-btn" id="team-btn">Search</button>
+            </div>
+        </div>
+        <div class="error-msg" id="team-error"></div>
+        <div class="team-info" id="team-info"></div>
+    </div>
+
+</div>
+
+<script>
+// --- Tabs ---
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    });
+});
+
+// --- Format buttons ---
+let selectedFormat = 'BO3';
+document.querySelectorAll('.format-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedFormat = btn.dataset.format;
+    });
+});
+
+// --- Predict ---
+document.getElementById('predict-btn').addEventListener('click', predict);
+document.getElementById('radiant-name').addEventListener('keydown', e => { if (e.key === 'Enter') predict(); });
+document.getElementById('dire-name').addEventListener('keydown', e => { if (e.key === 'Enter') predict(); });
+
+async function predict() {
+    const radiant = document.getElementById('radiant-name').value.trim();
+    const dire = document.getElementById('dire-name').value.trim();
+
+    if (!radiant || !dire) {
+        showError('predict-error', 'Enter both team names');
+        return;
+    }
+
+    hideError('predict-error');
+    document.getElementById('predict-result').classList.remove('show');
+    document.getElementById('predict-loading').classList.add('show');
+    document.getElementById('predict-btn').disabled = true;
+
+    try {
+        const resp = await fetch('/api/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ radiant, dire, format: selectedFormat }),
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            showError('predict-error', data.error);
+        } else {
+            renderPrediction(data);
+        }
+    } catch (err) {
+        showError('predict-error', 'Request failed: ' + err.message);
+    } finally {
+        document.getElementById('predict-loading').classList.remove('show');
+        document.getElementById('predict-btn').disabled = false;
+    }
+}
+
+function renderPrediction(d) {
+    const radIsWinner = d.radiant_win_prob >= 0.5;
+    const confClass = d.confidence === 'HIGH' ? 'high' : d.confidence === 'MEDIUM' ? 'medium' : 'low';
+    const confLabel = d.confidence === 'HIGH' ? 'High Confidence' : d.confidence === 'MEDIUM' ? 'Moderate Confidence' : 'Low Confidence';
+    const radPct = (d.radiant_win_prob * 100).toFixed(1);
+    const direPct = (d.dire_win_prob * 100).toFixed(1);
+
+    const bd = d.breakdown || {};
+    const tr = bd.team_ratings || {};
+    const rf = bd.recent_form || {};
+    const h2h = bd.h2h || {};
+
+    let factorsHtml = '';
+    if (tr.radiant) factorsHtml += factorRow('Team Rating (Radiant)', tr.radiant);
+    if (tr.dire) factorsHtml += factorRow('Team Rating (Dire)', tr.dire);
+    if (tr.elo_win_prob) factorsHtml += factorRow('Elo Win Probability', tr.elo_win_prob);
+    if (rf.radiant_winrate) factorsHtml += factorRow('Recent Form (Radiant)', rf.radiant_winrate);
+    if (rf.dire_winrate) factorsHtml += factorRow('Recent Form (Dire)', rf.dire_winrate);
+    if (h2h.games != null) factorsHtml += factorRow('H2H Games Played', h2h.games);
+    if (h2h.games > 0) factorsHtml += factorRow('H2H Radiant WR', h2h.radiant_winrate);
+    factorsHtml += factorRow('Model', d.model_type);
+    factorsHtml += factorRow('Format', d.series_format);
+
+    const html = `
+        <div class="result-card">
+            <div class="result-header ${confClass}">${confLabel} &mdash; ${d.predicted_winner} wins (${(d.win_probability * 100).toFixed(1)}%)</div>
+            <div class="result-body">
+                <div class="teams-result">
+                    <div class="team-box radiant ${radIsWinner ? 'winner' : ''}">
+                        ${radIsWinner ? '<div class="winner-badge">Winner</div>' : ''}
+                        <div class="team-side">Radiant</div>
+                        <div class="team-name">${esc(d.radiant_team)}</div>
+                        <div class="prob">${radPct}%</div>
+                    </div>
+                    <div class="team-box dire ${!radIsWinner ? 'winner' : ''}">
+                        ${!radIsWinner ? '<div class="winner-badge">Winner</div>' : ''}
+                        <div class="team-side">Dire</div>
+                        <div class="team-name">${esc(d.dire_team)}</div>
+                        <div class="prob">${direPct}%</div>
+                    </div>
+                </div>
+                <div class="prob-bar-container">
+                    <div class="prob-bar">
+                        <div class="radiant-fill" style="width:${radPct}%"></div>
+                        <div class="dire-fill" style="width:${direPct}%"></div>
+                    </div>
+                    <div class="prob-labels">
+                        <span>${esc(d.radiant_team)} ${radPct}%</span>
+                        <span>${direPct}% ${esc(d.dire_team)}</span>
+                    </div>
+                </div>
+                <div class="factors">
+                    <h3>Key Factors</h3>
+                    ${factorsHtml}
+                </div>
+            </div>
+        </div>`;
+
+    const el = document.getElementById('predict-result');
+    el.innerHTML = html;
+    el.classList.add('show');
+}
+
+function factorRow(label, value) {
+    return `<div class="factor-row"><span class="factor-label">${esc(String(label))}</span><span class="factor-value">${esc(String(value))}</span></div>`;
+}
+
+// --- Live ---
+document.getElementById('live-btn').addEventListener('click', loadLive);
+
+async function loadLive() {
+    hideError('live-error');
+    document.getElementById('live-loading').classList.add('show');
+    document.getElementById('live-btn').disabled = true;
+
+    try {
+        const resp = await fetch('/api/live');
+        const data = await resp.json();
+
+        const list = document.getElementById('live-list');
+        if (!data.length) {
+            list.innerHTML = '<div class="live-empty"><p>No live professional matches found.</p><p style="margin-top:8px">Try again when pro matches are being played.</p></div>';
+        } else {
+            list.innerHTML = data.map(d => {
+                const radPct = (d.radiant_win_prob * 100).toFixed(1);
+                const direPct = (d.dire_win_prob * 100).toFixed(1);
+                const confClass = d.confidence === 'HIGH' ? 'high' : d.confidence === 'MEDIUM' ? 'medium' : 'low';
+                return `
+                    <div class="result-card">
+                        <div class="result-header ${confClass}">${esc(d.league || 'Unknown League')} &mdash; ${esc(d.predicted_winner)} (${(d.win_probability*100).toFixed(1)}%)</div>
+                        <div class="result-body">
+                            <div class="prob-bar-container">
+                                <div class="prob-bar">
+                                    <div class="radiant-fill" style="width:${radPct}%"></div>
+                                    <div class="dire-fill" style="width:${direPct}%"></div>
+                                </div>
+                                <div class="prob-labels">
+                                    <span>${esc(d.radiant_team)} ${radPct}%</span>
+                                    <span>${direPct}% ${esc(d.dire_team)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+    } catch (err) {
+        showError('live-error', 'Failed to load: ' + err.message);
+    } finally {
+        document.getElementById('live-loading').classList.remove('show');
+        document.getElementById('live-btn').disabled = false;
+    }
+}
+
+// --- Team ---
+document.getElementById('team-btn').addEventListener('click', searchTeam);
+document.getElementById('team-name').addEventListener('keydown', e => { if (e.key === 'Enter') searchTeam(); });
+
+async function searchTeam() {
+    const name = document.getElementById('team-name').value.trim();
+    if (!name) { showError('team-error', 'Enter a team name'); return; }
+    hideError('team-error');
+
+    try {
+        const resp = await fetch('/api/team?name=' + encodeURIComponent(name));
+        const data = await resp.json();
+
+        if (data.error) {
+            showError('team-error', data.error);
+            document.getElementById('team-info').classList.remove('show');
+            return;
+        }
+
+        const el = document.getElementById('team-info');
+        el.innerHTML = `
+            <h2 style="margin:20px 0 16px;font-size:1.3rem;">${esc(data.name)} <span style="color:var(--text2);font-weight:400;">[${esc(data.tag)}]</span></h2>
+            <div class="team-stats">
+                <div class="stat-box"><div class="stat-value">${data.rating || 'N/A'}</div><div class="stat-label">Rating</div></div>
+                <div class="stat-box"><div class="stat-value">${data.wins || 0}</div><div class="stat-label">Wins</div></div>
+                <div class="stat-box"><div class="stat-value">${data.losses || 0}</div><div class="stat-label">Losses</div></div>
+                <div class="stat-box"><div class="stat-value">${(data.winrate * 100).toFixed(1)}%</div><div class="stat-label">Win Rate</div></div>
+                <div class="stat-box"><div class="stat-value">${data.team_id}</div><div class="stat-label">Team ID</div></div>
+            </div>`;
+        el.classList.add('show');
+    } catch (err) {
+        showError('team-error', 'Request failed: ' + err.message);
+    }
+}
+
+// --- Helpers ---
+function showError(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.classList.add('show');
+}
+function hideError(id) {
+    document.getElementById(id).classList.remove('show');
+}
+function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+</script>
+
+</body>
+</html>
