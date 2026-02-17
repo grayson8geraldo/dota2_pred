@@ -477,9 +477,16 @@ class MatchPredictor:
         seen_pairs: set[tuple[int, int]] = set()
         match_list: list[dict] = []
 
-        # ---- Source 1: Live matches ----
+        # ---- Source 1: Live matches (skip if API is rate-limited) ----
         logger.info("Fetching live matches...")
         live = self.client.get_live_matches() or []
+        if not live and self.client._current_delay > config.REQUEST_DELAY * 2:
+            logger.info("  API rate-limited, skipping live/pro match sources")
+            # Jump straight to Liquipedia
+            live = []
+            pro_matches_skip = True
+        else:
+            pro_matches_skip = False
         for m in live:
             rad = m.get("radiant_team", {})
             dire = m.get("dire_team", {})
@@ -503,8 +510,11 @@ class MatchPredictor:
         logger.info(f"  Live matches with team data: {len(match_list)}")
 
         # ---- Source 2: Pro matches (paginated, today only) ----
-        logger.info("Fetching recent pro matches (paginated)...")
-        pro_matches = self.client.get_pro_matches_paginated(pages=3)
+        if pro_matches_skip:
+            pro_matches = []
+        else:
+            logger.info("Fetching recent pro matches (paginated)...")
+            pro_matches = self.client.get_pro_matches_paginated(pages=3)
         pro_added = 0
         for m in pro_matches:
             start = m.get("start_time", 0)
