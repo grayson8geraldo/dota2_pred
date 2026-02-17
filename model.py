@@ -92,12 +92,20 @@ class Dota2Predictor:
         self.ensemble.fit(X_scaled, y)
         self.gbm.fit(X_scaled, y)  # Also fit individually for feature importances
 
+        # Calibrate probabilities using isotonic regression (5-fold CV)
+        # This ensures that when the model says 70%, it wins ~70% of the time
+        logger.info("  Calibrating probabilities (isotonic regression)...")
+        self.calibrated = CalibratedClassifierCV(
+            self.ensemble, cv=5, method="isotonic"
+        )
+        self.calibrated.fit(X_scaled, y)
+
         self.is_trained = True
         self._feature_importances = self.gbm.feature_importances_
 
-        # Full training metrics
-        y_pred = self.ensemble.predict(X_scaled)
-        y_proba = self.ensemble.predict_proba(X_scaled)[:, 1]
+        # Full training metrics (use calibrated model for proba)
+        y_pred = self.calibrated.predict(X_scaled)
+        y_proba = self.calibrated.predict_proba(X_scaled)[:, 1]
 
         metrics = {
             "n_samples": X.shape[0],
@@ -150,8 +158,11 @@ class Dota2Predictor:
             X = np.hstack([X, pad])
 
         X_scaled = self.scaler.transform(X)
-        predictions = self.ensemble.predict(X_scaled)
-        probabilities = self.ensemble.predict_proba(X_scaled)[:, 1]
+
+        # Use calibrated model if available (trained with current version)
+        model = getattr(self, "calibrated", self.ensemble)
+        predictions = model.predict(X_scaled)
+        probabilities = model.predict_proba(X_scaled)[:, 1]
 
         return predictions, probabilities
 
@@ -173,18 +184,27 @@ class Dota2Predictor:
         os.makedirs(directory, exist_ok=True)
         joblib.dump(self.ensemble, os.path.join(directory, config.TRAINED_MODEL_FILE))
         joblib.dump(self.scaler, os.path.join(directory, config.SCALER_FILE))
+        # Save calibrated model separately
+        if hasattr(self, "calibrated"):
+            joblib.dump(self.calibrated, os.path.join(directory, "calibrated_model.joblib"))
         logger.info(f"Model saved to {directory}")
 
     def load(self, directory: str = config.MODEL_PATH):
         """Load model from disk."""
         model_path = os.path.join(directory, config.TRAINED_MODEL_FILE)
         scaler_path = os.path.join(directory, config.SCALER_FILE)
+        cal_path = os.path.join(directory, "calibrated_model.joblib")
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"No trained model found at {model_path}")
 
         self.ensemble = joblib.load(model_path)
         self.scaler = joblib.load(scaler_path)
+        if os.path.exists(cal_path):
+            self.calibrated = joblib.load(cal_path)
+            logger.info(f"Calibrated model loaded from {directory}")
+        else:
+            logger.warning("No calibrated model found, using raw ensemble (retrain recommended)")
         self.is_trained = True
         logger.info(f"Model loaded from {directory}")
 
@@ -215,7 +235,11 @@ class HeuristicPredictor:
 
         # Weighted recent form
         wwr_diff = f.get("rad_weighted_wr", 0.5) - f.get("dire_weighted_wr", 0.5)
-        score += wwr_diff * 0.10
+        score += wwr_diff * 0.08
+
+        # Short-term momentum (last 5 matches, 7-day decay)
+        mom_diff = f.get("rad_momentum", 0.5) - f.get("dire_momentum", 0.5)
+        score += mom_diff * 0.12
 
         # Head-to-head
         h2h_games = f.get("h2h_games", 0.0)

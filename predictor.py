@@ -253,6 +253,8 @@ class MatchPredictor:
             "recent_form": {
                 "radiant_winrate": f"{f.get('rad_winrate', 0.5):.1%}",
                 "dire_winrate": f"{f.get('dire_winrate', 0.5):.1%}",
+                "radiant_momentum": f"{f.get('rad_momentum', 0.5):.1%}",
+                "dire_momentum": f"{f.get('dire_momentum', 0.5):.1%}",
             },
             "h2h": {
                 "games": int(f.get('h2h_games', 0) * 30),

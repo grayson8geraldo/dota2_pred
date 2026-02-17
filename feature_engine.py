@@ -78,15 +78,19 @@ def extract_recent_form_features(
     Returns:
         [rad_winrate, dire_winrate, form_diff,
          rad_weighted_wr, dire_weighted_wr,
-         rad_streak, dire_streak]
+         rad_streak, dire_streak,
+         rad_momentum, dire_momentum]
+
+    The momentum feature captures short-term form (last 5 matches)
+    with aggressive decay (half_life=7 days), making yesterday's
+    results much more impactful than the broader n_recent window.
     """
-    def _form(team_data: dict) -> tuple[float, float, float]:
+    def _form(team_data: dict) -> tuple[float, float, float, float]:
         matches = team_data.get("matches", [])[:n_recent]
         if not matches:
-            return 0.5, 0.5, 0.0
+            return 0.5, 0.5, 0.0, 0.5
 
-        # Ensure newest-first ordering (OpenDota returns newest first,
-        # but guard against unexpected ordering)
+        # Ensure newest-first ordering
         matches = sorted(matches, key=lambda m: m.get("start_time", 0), reverse=True)
 
         now = time.time()
@@ -94,16 +98,20 @@ def extract_recent_form_features(
         weighted_wins = 0.0
         weighted_total = 0.0
 
+        # Short-term momentum (last 5 matches, aggressive 7-day decay)
+        momentum_wins = 0.0
+        momentum_total = 0.0
+
         # Current streak: count consecutive W or L from most recent match
         streak = 0
         streak_done = False
 
-        for m in matches:
+        for i, m in enumerate(matches):
             is_win = m.get("win") == 1 if "win" in m else m.get("radiant_win", False)
             if is_win:
                 wins += 1
 
-            # Time-weighted form
+            # Time-weighted form (30-day half-life)
             start_time = m.get("start_time", now)
             days_ago = max(0, (now - start_time) / 86400)
             w = _decay_weight(days_ago)
@@ -111,27 +119,35 @@ def extract_recent_form_features(
             if is_win:
                 weighted_wins += w
 
+            # Short-term momentum (first 5 matches, 7-day half-life)
+            if i < 5:
+                mw = _decay_weight(days_ago, half_life=7.0)
+                momentum_total += mw
+                if is_win:
+                    momentum_wins += mw
+
             # Current streak (from most recent match backwards)
             if not streak_done:
                 if streak == 0:
-                    # First match sets direction
                     streak = 1 if is_win else -1
                 elif (streak > 0 and is_win) or (streak < 0 and not is_win):
                     streak += 1 if is_win else -1
                 else:
-                    streak_done = True  # direction changed, lock streak
+                    streak_done = True
 
         winrate = _safe_div(wins, len(matches), 0.5)
         weighted_wr = _safe_div(weighted_wins, weighted_total, 0.5)
-        return winrate, weighted_wr, streak
+        momentum = _safe_div(momentum_wins, momentum_total, 0.5)
+        return winrate, weighted_wr, streak, momentum
 
-    rad_wr, rad_wwr, rad_streak = _form(radiant_team)
-    dire_wr, dire_wwr, dire_streak = _form(dire_team)
+    rad_wr, rad_wwr, rad_streak, rad_mom = _form(radiant_team)
+    dire_wr, dire_wwr, dire_streak, dire_mom = _form(dire_team)
 
     return [
         rad_wr, dire_wr, rad_wr - dire_wr,
         rad_wwr, dire_wwr,
         rad_streak / 10.0, dire_streak / 10.0,  # normalize streak
+        rad_mom, dire_mom,
     ]
 
 
@@ -433,6 +449,7 @@ def get_feature_names() -> list[str]:
         "rad_winrate", "dire_winrate", "form_diff",
         "rad_weighted_wr", "dire_weighted_wr",
         "rad_streak", "dire_streak",
+        "rad_momentum", "dire_momentum",
         # Head-to-head
         "h2h_games", "h2h_rad_winrate", "h2h_recent_rad_wr",
         # Hero draft
@@ -450,4 +467,4 @@ def get_feature_names() -> list[str]:
     ]
 
 
-N_FEATURES = len(get_feature_names())  # 33 features total
+N_FEATURES = len(get_feature_names())  # 36 features

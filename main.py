@@ -79,6 +79,10 @@ def format_prediction(pred: dict) -> str:
         if rf:
             lines.append(f"  Recent Form:    Radiant={rf.get('radiant_winrate', 'N/A')}"
                          f"  Dire={rf.get('dire_winrate', 'N/A')}")
+            rad_mom = rf.get("radiant_momentum")
+            dire_mom = rf.get("dire_momentum")
+            if rad_mom and dire_mom:
+                lines.append(f"  Momentum (5g):  Radiant={rad_mom}  Dire={dire_mom}")
 
         h2h = bd.get("h2h", {})
         if h2h:
