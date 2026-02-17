@@ -335,8 +335,8 @@ Examples:
 
     # train
     p_train = subparsers.add_parser("train", help="Train the prediction model")
-    p_train.add_argument("--matches", type=int, default=300,
-                         help="Number of pro matches to train on (default: 300)")
+    p_train.add_argument("--matches", type=int, default=1500,
+                         help="Number of pro matches to train on (default: 1500)")
     p_train.set_defaults(func=cmd_train)
 
     # team

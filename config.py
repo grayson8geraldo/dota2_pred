@@ -8,11 +8,11 @@ OPENDOTA_API_KEY = None  # Set your API key here or via environment variable
 
 # Request settings
 REQUEST_TIMEOUT = 30
-REQUEST_DELAY = 3.5  # seconds between requests (respect rate limits)
+REQUEST_DELAY = 1.2  # seconds between requests (OpenDota: 60/min free, 1200/min with key)
 MAX_RETRIES = 3
 
 # Data collection settings
-PRO_MATCHES_LIMIT = 500  # Number of recent pro matches to fetch for training
+PRO_MATCHES_LIMIT = 1500  # Number of recent pro matches to fetch for training
 TEAM_MATCH_HISTORY = 50  # Last N matches per team for form calculation
 H2H_LOOKBACK = 18  # Number of months to look back for head-to-head
 

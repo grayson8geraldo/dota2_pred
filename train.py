@@ -153,7 +153,7 @@ def train_model(n_matches: int = config.PRO_MATCHES_LIMIT):
     missing_teams = [tid for tid in team_ids if tid not in teams_data]
     if missing_teams:
         logger.info(f"Fetching data for {len(missing_teams)} teams...")
-        new_data = collect_team_data(client, missing_teams[:100])  # Limit API calls
+        new_data = collect_team_data(client, missing_teams[:300])  # Top 300 teams
         teams_data.update(new_data)
         save_data({str(k): v for k, v in teams_data.items()}, teams_file)
 
