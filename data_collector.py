@@ -24,12 +24,13 @@ class OpenDotaClient:
         self.api_key = api_key or config.OPENDOTA_API_KEY or os.environ.get("OPENDOTA_API_KEY")
         self.session = requests.Session()
         self._last_request_time = 0
+        self._current_delay = config.REQUEST_DELAY  # adaptive; grows on 429
 
     def _rate_limit(self):
-        """Respect API rate limits."""
+        """Respect API rate limits with adaptive delay."""
         elapsed = time.time() - self._last_request_time
-        if elapsed < config.REQUEST_DELAY:
-            time.sleep(config.REQUEST_DELAY - elapsed)
+        if elapsed < self._current_delay:
+            time.sleep(self._current_delay - elapsed)
         self._last_request_time = time.time()
 
     def _get(self, endpoint: str, params: Optional[dict] = None) -> Optional[dict | list]:
@@ -45,10 +46,21 @@ class OpenDotaClient:
             try:
                 response = self.session.get(url, params=params, timeout=config.REQUEST_TIMEOUT)
                 if response.status_code == 200:
+                    # Success: gradually reduce delay back to baseline
+                    if self._current_delay > config.REQUEST_DELAY:
+                        self._current_delay = max(
+                            config.REQUEST_DELAY,
+                            self._current_delay * 0.8,
+                        )
                     return response.json()
                 elif response.status_code == 429:
                     wait_time = 2 ** (attempt + 1)
-                    logger.warning(f"Rate limited, waiting {wait_time}s...")
+                    # Adaptive: increase base delay so future requests are slower
+                    self._current_delay = min(self._current_delay * 2, 15.0)
+                    logger.warning(
+                        f"Rate limited, waiting {wait_time}s... "
+                        f"(delay raised to {self._current_delay:.1f}s)"
+                    )
                     time.sleep(wait_time)
                 else:
                     logger.error(f"API error {response.status_code}: {response.text[:200]}")

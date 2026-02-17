@@ -56,6 +56,9 @@ class MatchPredictor:
         if team_data:
             self.team_cache = {int(k): v for k, v in team_data.items()}
 
+        # Pre-load teams list from disk (avoids API call on first name lookup)
+        self._teams_list = self._load_teams_list()
+
         if self.use_ml:
             try:
                 self.ml_model.load()
@@ -110,16 +113,63 @@ class MatchPredictor:
                 os.path.join(config.MODEL_PATH, config.TEAM_CACHE_FILE),
             )
 
+    def _load_teams_list(self) -> list[dict]:
+        """Load the /teams list from disk cache, fetching from API only if stale."""
+        teams_path = os.path.join(config.MODEL_PATH, config.TEAMS_LIST_FILE)
+        teams_list = []
+
+        # Try disk cache first
+        if os.path.exists(teams_path):
+            cache_age = time.time() - os.path.getmtime(teams_path)
+            if cache_age < config.TEAMS_LIST_TTL:
+                try:
+                    with open(teams_path, "r") as f:
+                        teams_list = json.load(f)
+                    logger.info(
+                        f"Loaded {len(teams_list)} teams from disk cache "
+                        f"(age: {cache_age / 3600:.1f}h)"
+                    )
+                    return teams_list
+                except (json.JSONDecodeError, OSError) as e:
+                    logger.warning(f"Could not read teams cache: {e}")
+
+        # Fetch from API
+        logger.info("Fetching teams list from OpenDota API...")
+        teams_list = self.client.get_teams() or []
+
+        if teams_list:
+            # Save to disk for next time
+            os.makedirs(config.MODEL_PATH, exist_ok=True)
+            try:
+                with open(teams_path, "w") as f:
+                    json.dump(teams_list, f)
+                logger.info(f"Cached {len(teams_list)} teams to disk")
+            except OSError as e:
+                logger.warning(f"Could not save teams cache: {e}")
+        else:
+            # API failed — try stale disk cache as fallback
+            if os.path.exists(teams_path):
+                try:
+                    with open(teams_path, "r") as f:
+                        teams_list = json.load(f)
+                    logger.warning(
+                        f"API failed, using stale disk cache ({len(teams_list)} teams)"
+                    )
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        return teams_list
+
     def find_team_by_name(self, name: str) -> Optional[dict]:
         """Search for a team by name using the teams endpoint.
 
         Strategy: exact name/tag -> partial match -> fuzzy match (>= 80 score).
-        The team list is fetched once and cached for the session.
+        The team list is loaded from disk cache (refreshed every 24h).
         Only considers active teams (played in last 6 months) for fuzzy matching
         to avoid matching defunct teams with similar names.
         """
         if not hasattr(self, "_teams_list") or self._teams_list is None:
-            self._teams_list = self.client.get_teams() or []
+            self._teams_list = self._load_teams_list()
 
         if not self._teams_list:
             return None

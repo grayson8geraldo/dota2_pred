@@ -8,7 +8,7 @@ OPENDOTA_API_KEY = None  # Set your API key here or via environment variable
 
 # Request settings
 REQUEST_TIMEOUT = 30
-REQUEST_DELAY = 1.2  # seconds between requests (OpenDota: 60/min free, 1200/min with key)
+REQUEST_DELAY = 2.0  # seconds between requests (safe for OpenDota free tier: 30 req/min)
 MAX_RETRIES = 3
 
 # Data collection settings
@@ -37,6 +37,8 @@ TRAINED_MODEL_FILE = "dota2_predictor.joblib"
 SCALER_FILE = "feature_scaler.joblib"
 HERO_STATS_FILE = "hero_stats.json"
 TEAM_CACHE_FILE = "team_cache.json"
+TEAMS_LIST_FILE = "teams_list.json"       # Cached /teams response
+TEAMS_LIST_TTL = 86400                     # Refresh teams list every 24 hours
 
 # Prediction thresholds
 HIGH_CONFIDENCE_THRESHOLD = 0.65  # Above this = high confidence prediction
