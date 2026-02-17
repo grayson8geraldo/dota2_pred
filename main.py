@@ -295,8 +295,26 @@ def cmd_today(args):
 
 
 def cmd_refresh(args):
-    """Refresh cached hero and team data."""
+    """Refresh cached hero, team, and teams-list data."""
     predictor = MatchPredictor(use_ml_model=False)
+
+    # Refresh teams list (used for name → ID resolution)
+    print("\nRefreshing teams list...")
+    teams = predictor.client.get_teams() or []
+    if teams:
+        import os
+        teams_path = os.path.join(config.MODEL_PATH, config.TEAMS_LIST_FILE)
+        os.makedirs(config.MODEL_PATH, exist_ok=True)
+        import json as _json
+        with open(teams_path, "w") as f:
+            _json.dump(teams, f)
+        predictor._teams_list = teams
+        print(f"  Cached {len(teams)} teams to disk.")
+    else:
+        print("  WARNING: Could not fetch teams list (rate limited?). "
+              "Try again in a few minutes.")
+
+    # Refresh hero stats
     print("\nRefreshing hero stats...")
     predictor.refresh_hero_stats()
     predictor.save_caches()

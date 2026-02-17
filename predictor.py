@@ -114,11 +114,18 @@ class MatchPredictor:
             )
 
     def _load_teams_list(self) -> list[dict]:
-        """Load the /teams list from disk cache, fetching from API only if stale."""
+        """Load the /teams list, trying multiple sources in order.
+
+        Priority:
+        1. Disk cache (teams_list.json) — fast, no API call
+        2. OpenDota /teams API — fresh data, saves to disk
+        3. Stale disk cache — if API fails but old file exists
+        4. Build from team_cache — if API fails and no teams_list on disk
+        """
         teams_path = os.path.join(config.MODEL_PATH, config.TEAMS_LIST_FILE)
         teams_list = []
 
-        # Try disk cache first
+        # 1. Try fresh disk cache first
         if os.path.exists(teams_path):
             cache_age = time.time() - os.path.getmtime(teams_path)
             if cache_age < config.TEAMS_LIST_TTL:
@@ -133,7 +140,7 @@ class MatchPredictor:
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(f"Could not read teams cache: {e}")
 
-        # Fetch from API
+        # 2. Fetch from API
         logger.info("Fetching teams list from OpenDota API...")
         teams_list = self.client.get_teams() or []
 
@@ -146,19 +153,52 @@ class MatchPredictor:
                 logger.info(f"Cached {len(teams_list)} teams to disk")
             except OSError as e:
                 logger.warning(f"Could not save teams cache: {e}")
-        else:
-            # API failed — try stale disk cache as fallback
-            if os.path.exists(teams_path):
-                try:
-                    with open(teams_path, "r") as f:
-                        teams_list = json.load(f)
-                    logger.warning(
-                        f"API failed, using stale disk cache ({len(teams_list)} teams)"
-                    )
-                except (json.JSONDecodeError, OSError):
-                    pass
+            return teams_list
 
-        return teams_list
+        # 3. API failed — try stale disk cache
+        if os.path.exists(teams_path):
+            try:
+                with open(teams_path, "r") as f:
+                    teams_list = json.load(f)
+                logger.warning(
+                    f"API failed, using stale disk cache ({len(teams_list)} teams)"
+                )
+                return teams_list
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # 4. Last resort — build from team_cache (training data)
+        if self.team_cache:
+            teams_list = []
+            for tid, data in self.team_cache.items():
+                info = data.get("info", {})
+                if info.get("name"):
+                    teams_list.append({
+                        "team_id": int(tid),
+                        "name": info.get("name", ""),
+                        "tag": info.get("tag", ""),
+                        "rating": info.get("rating", 0),
+                        "last_match_time": info.get("last_match_time"),
+                    })
+            if teams_list:
+                logger.warning(
+                    f"API unavailable, built teams list from team_cache "
+                    f"({len(teams_list)} teams)"
+                )
+                # Save this so next startup doesn't need API either
+                os.makedirs(config.MODEL_PATH, exist_ok=True)
+                try:
+                    with open(teams_path, "w") as f:
+                        json.dump(teams_list, f)
+                except OSError:
+                    pass
+                return teams_list
+
+        logger.error(
+            "No teams data available! Run 'python main.py refresh' "
+            "when OpenDota rate limits reset."
+        )
+        return []
 
     def find_team_by_name(self, name: str) -> Optional[dict]:
         """Search for a team by name using the teams endpoint.
