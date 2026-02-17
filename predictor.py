@@ -44,6 +44,7 @@ class MatchPredictor:
         self.hero_stats = None
         self.team_cache = {}        # team_id -> team data
         self._cache_timestamps = {}  # team_id -> fetch timestamp
+        self._api_failures = 0       # consecutive API failures (circuit breaker)
         self._load_caches()
 
     def _load_caches(self):
@@ -75,17 +76,43 @@ class MatchPredictor:
         logger.info(f"Cached {len(self.hero_stats.get('heroes', {}))} heroes")
 
     def get_team_data(self, team_id: int, force_refresh: bool = False) -> dict:
-        """Get team data, fetching from API if not cached or stale."""
+        """Get team data, fetching from API if not cached.
+
+        Uses a circuit breaker: after 3 consecutive API failures, stops
+        trying the API and returns cached/default data instantly.
+        """
+        default = {"info": {"rating": 1200}, "matches": [], "heroes": [], "players": []}
+
+        # Return cached data if available (ignore TTL when API is down)
         if not force_refresh and team_id in self.team_cache:
             cached_at = self._cache_timestamps.get(team_id, 0)
-            if time.time() - cached_at < self.CACHE_TTL:
+            # If API is healthy and cache is fresh, use it
+            # If API is down (circuit open), use any cached data regardless of age
+            if self._api_failures >= 3 or (time.time() - cached_at < self.CACHE_TTL):
                 return self.team_cache[team_id]
+
+        # Circuit breaker: don't attempt API if it's been failing
+        if self._api_failures >= 3:
+            if team_id in self.team_cache:
+                return self.team_cache[team_id]
+            return default
 
         logger.info(f"Fetching data for team {team_id}...")
         team_info = self.client.get_team(team_id)
         if not team_info:
-            logger.error(f"Could not fetch team {team_id}")
-            return {"info": {"rating": 1200}, "matches": [], "heroes": [], "players": []}
+            self._api_failures += 1
+            if self._api_failures >= 3:
+                logger.warning(
+                    "API circuit breaker OPEN: too many failures. "
+                    "Using cached data only."
+                )
+            # Return stale cache if available, otherwise default
+            if team_id in self.team_cache:
+                return self.team_cache[team_id]
+            return default
+
+        # API success — reset circuit breaker
+        self._api_failures = 0
 
         matches = self.client.get_team_matches(team_id) or []
         heroes = self.client.get_team_heroes(team_id) or []
@@ -557,13 +584,23 @@ class MatchPredictor:
         logger.info(f"  Total matches before filtering: {len(match_list)}")
 
         # ---- Filter by team rating (unless --all) ----
+        # Use ratings from _teams_list (already loaded, no API calls needed)
         if not show_all:
+            # Build team_id -> rating lookup from teams_list and team_cache
+            rating_lookup = {}
+            for t in (self._teams_list or []):
+                tid = t.get("team_id")
+                if tid:
+                    rating_lookup[tid] = t.get("rating") or 0
+            # Also check team_cache for ratings not in teams_list
+            for tid, data in self.team_cache.items():
+                if tid not in rating_lookup:
+                    rating_lookup[tid] = data.get("info", {}).get("rating", 0) or 0
+
             filtered = []
             for entry in match_list:
-                rad_data = self.get_team_data(entry["radiant_team_id"])
-                dire_data = self.get_team_data(entry["dire_team_id"])
-                rad_rating = rad_data.get("info", {}).get("rating", 0) or 0
-                dire_rating = dire_data.get("info", {}).get("rating", 0) or 0
+                rad_rating = rating_lookup.get(entry["radiant_team_id"], 0)
+                dire_rating = rating_lookup.get(entry["dire_team_id"], 0)
                 avg_rating = (rad_rating + dire_rating) / 2
 
                 if avg_rating >= min_rating:
