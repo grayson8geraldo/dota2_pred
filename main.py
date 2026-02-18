@@ -314,6 +314,12 @@ def cmd_refresh(args):
         print("  WARNING: Could not fetch teams list (rate limited?). "
               "Try again in a few minutes.")
 
+    # Refresh match data for all cached teams
+    if predictor.team_cache:
+        print(f"\nRefreshing match history for {len(predictor.team_cache)} cached teams...")
+        predictor.refresh_teams_matches(list(predictor.team_cache.keys()))
+        print("  Match history updated.")
+
     # Refresh hero stats
     print("\nRefreshing hero stats...")
     predictor.refresh_hero_stats()

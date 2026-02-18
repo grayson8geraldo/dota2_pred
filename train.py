@@ -113,12 +113,35 @@ def train_model(n_matches: int = config.PRO_MATCHES_LIMIT):
     client = OpenDotaClient()
     os.makedirs(config.MODEL_PATH, exist_ok=True)
 
-    # Step 1: Check for cached match data
+    # Step 1: Collect match data (incremental — merge new with existing)
     matches_file = os.path.join(config.MODEL_PATH, "training_matches.json")
-    matches = None
     cached = load_data(matches_file)
-    if cached and len(cached) >= n_matches * 0.8:
-        logger.info(f"Using cached training data ({len(cached)} matches)")
+    if cached:
+        logger.info(f"Found cached training data ({len(cached)} matches)")
+        existing_ids = {m.get("match_id") for m in cached if m.get("match_id")}
+
+        # Determine how many new matches we need
+        need = max(0, n_matches - len(cached))
+        if need > 0 or len(cached) < n_matches * 0.8:
+            # Fetch new matches and merge with existing
+            fetch_count = max(need, n_matches // 3)  # at least 1/3 of target
+            logger.info(
+                f"Fetching {fetch_count} new matches to supplement "
+                f"{len(cached)} cached..."
+            )
+            new_matches = collect_pro_matches(client, fetch_count)
+            added = 0
+            for m in new_matches:
+                mid = m.get("match_id")
+                if mid and mid not in existing_ids:
+                    cached.append(m)
+                    existing_ids.add(mid)
+                    added += 1
+            logger.info(f"  Added {added} new unique matches (total: {len(cached)})")
+            # Keep only the most recent n_matches (by match_id = roughly chronological)
+            cached.sort(key=lambda m: m.get("match_id", 0), reverse=True)
+            cached = cached[:n_matches]
+            save_data(cached, matches_file)
         matches = cached
     else:
         logger.info(f"Collecting {n_matches} pro matches from OpenDota...")

@@ -34,7 +34,8 @@ class MatchPredictor:
     """High-level interface for predicting Dota 2 matches."""
 
     # Cache entries older than this are re-fetched from API
-    CACHE_TTL = 3600  # 1 hour
+    CACHE_TTL = 3600  # 1 hour — full team data (info, heroes, players)
+    MATCHES_TTL = 14400  # 4 hours — match history only (form, streak, momentum)
 
     def __init__(self, use_ml_model: bool = True):
         self.client = OpenDotaClient()
@@ -78,26 +79,52 @@ class MatchPredictor:
     def get_team_data(self, team_id: int, force_refresh: bool = False) -> dict:
         """Get team data, fetching from API if not cached.
 
-        Uses a circuit breaker: after 3 consecutive API failures, stops
-        trying the API and returns cached/default data instantly.
+        Smart refresh strategy:
+        - Full refresh (info + matches + heroes + players): every CACHE_TTL (1h)
+        - Match-only refresh (just matches list): every MATCHES_TTL (4h)
+        - Circuit breaker: after 3 consecutive API failures, return cached data
+
+        The match-only refresh costs 1 API call instead of 4 and ensures
+        that form, streak, momentum, and H2H are based on recent results.
         """
         default = {"info": {"rating": 1200}, "matches": [], "heroes": [], "players": []}
 
-        # Return cached data if available (ignore TTL when API is down)
-        if not force_refresh and team_id in self.team_cache:
-            cached_at = self._cache_timestamps.get(team_id, 0)
-            # If API is healthy and cache is fresh, use it
-            # If API is down (circuit open), use any cached data regardless of age
-            if self._api_failures >= 3 or (time.time() - cached_at < self.CACHE_TTL):
-                return self.team_cache[team_id]
+        now = time.time()
+        cached = self.team_cache.get(team_id)
+        cached_at = self._cache_timestamps.get(team_id, 0)
+        age = now - cached_at
 
         # Circuit breaker: don't attempt API if it's been failing
         if self._api_failures >= 3:
-            if team_id in self.team_cache:
-                return self.team_cache[team_id]
-            return default
+            return cached if cached else default
 
-        logger.info(f"Fetching data for team {team_id}...")
+        # Fresh enough — return as-is
+        if not force_refresh and cached and age < self.MATCHES_TTL:
+            return cached
+
+        # Match-only refresh: if we have team data but matches are stale
+        if cached and age >= self.MATCHES_TTL and age < self.CACHE_TTL * 24:
+            fresh_matches = self.client.get_team_matches(team_id)
+            if fresh_matches is not None:
+                self._api_failures = 0
+                cached["matches"] = fresh_matches[:config.TEAM_MATCH_HISTORY]
+                # Also update rating from a quick team info call
+                team_info = self.client.get_team(team_id)
+                if team_info:
+                    cached["info"] = team_info
+                self._cache_timestamps[team_id] = now
+                return cached
+            else:
+                self._api_failures += 1
+                if self._api_failures >= 3:
+                    logger.warning(
+                        "API circuit breaker OPEN: too many failures. "
+                        "Using cached data only."
+                    )
+                return cached  # stale but better than nothing
+
+        # Full refresh: no cached data or very old
+        logger.info(f"Fetching full data for team {team_id}...")
         team_info = self.client.get_team(team_id)
         if not team_info:
             self._api_failures += 1
@@ -106,10 +133,7 @@ class MatchPredictor:
                     "API circuit breaker OPEN: too many failures. "
                     "Using cached data only."
                 )
-            # Return stale cache if available, otherwise default
-            if team_id in self.team_cache:
-                return self.team_cache[team_id]
-            return default
+            return cached if cached else default
 
         # API success — reset circuit breaker
         self._api_failures = 0
@@ -126,8 +150,52 @@ class MatchPredictor:
         }
 
         self.team_cache[team_id] = data
-        self._cache_timestamps[team_id] = time.time()
+        self._cache_timestamps[team_id] = now
         return data
+
+    def refresh_teams_matches(self, team_ids: list[int]):
+        """Batch-refresh match history for multiple teams.
+
+        Only fetches teams whose cached matches are older than MATCHES_TTL.
+        Each team costs 1 API call (GET /teams/{id}/matches).
+        Stops early if circuit breaker trips.
+        """
+        if self._api_failures >= 3:
+            return
+
+        now = time.time()
+        stale_ids = []
+        for tid in team_ids:
+            cached_at = self._cache_timestamps.get(tid, 0)
+            if now - cached_at >= self.MATCHES_TTL and tid in self.team_cache:
+                stale_ids.append(tid)
+
+        if not stale_ids:
+            return
+
+        logger.info(f"Refreshing match history for {len(stale_ids)} teams...")
+        refreshed = 0
+        for tid in stale_ids:
+            if self._api_failures >= 3:
+                logger.warning(
+                    f"Circuit breaker tripped after refreshing {refreshed} teams"
+                )
+                break
+            fresh_matches = self.client.get_team_matches(tid)
+            if fresh_matches is not None:
+                self._api_failures = 0
+                self.team_cache[tid]["matches"] = fresh_matches[:config.TEAM_MATCH_HISTORY]
+                # Quick rating update
+                team_info = self.client.get_team(tid)
+                if team_info:
+                    self.team_cache[tid]["info"] = team_info
+                self._cache_timestamps[tid] = now
+                refreshed += 1
+            else:
+                self._api_failures += 1
+
+        if refreshed:
+            logger.info(f"  Refreshed {refreshed}/{len(stale_ids)} teams")
 
     def save_caches(self):
         """Save cached data to disk."""
@@ -361,6 +429,17 @@ class MatchPredictor:
 
         # Feature breakdown (use name lookup instead of fragile indices)
         f = dict(zip(feature_names, features))
+
+        # Data freshness: how old is each team's match data?
+        def _data_age_str(team_id: int) -> str:
+            cached_at = self._cache_timestamps.get(team_id, 0)
+            if not cached_at:
+                return "from training"
+            age_h = (time.time() - cached_at) / 3600
+            if age_h < 1:
+                return f"{int(age_h * 60)}m ago"
+            return f"{age_h:.1f}h ago"
+
         breakdown = {
             "team_ratings": {
                 "radiant": rad_team.get("info", {}).get("rating", "N/A"),
@@ -376,6 +455,10 @@ class MatchPredictor:
             "h2h": {
                 "games": int(f.get('h2h_games', 0) * 30),
                 "radiant_winrate": f"{f.get('h2h_rad_winrate', 0.5):.1%}",
+            },
+            "data_freshness": {
+                "radiant": _data_age_str(radiant_team_id),
+                "dire": _data_age_str(dire_team_id),
             },
         }
 
@@ -635,6 +718,14 @@ class MatchPredictor:
                 -e.get("_avg_rating", 0),
             )
         )
+
+        # ---- Refresh stale team match data before predicting ----
+        # This ensures form/streak/momentum/H2H use recent results
+        team_ids_to_predict = set()
+        for entry in match_list:
+            team_ids_to_predict.add(entry["radiant_team_id"])
+            team_ids_to_predict.add(entry["dire_team_id"])
+        self.refresh_teams_matches(list(team_ids_to_predict))
 
         # ---- Predict each pair ----
         predictions = []
