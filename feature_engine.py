@@ -1,9 +1,20 @@
 """
-Feature engineering pipeline for Dota 2 match prediction.
+Feature engineering pipeline for Dota 2 match prediction (pre-match only).
 
-Extracts numerical features from raw match/team/hero data that can be
-fed into ML models. Each feature group captures a different aspect
-of what determines match outcome.
+Extracts numerical features from raw team/player data that can be
+fed into ML models. Draft features are excluded since picks are
+unknown before the match starts.
+
+Feature groups:
+  1. Team Rating (4)     - Elo-based rating comparison
+  2. Recent Form (9)     - Win rates, streaks, momentum
+  3. Head-to-Head (3)    - Historical matchup record
+  4. Player Strength (6) - Individual player metrics & hero pools
+  5. Map Side (2)        - Radiant/Dire advantage
+  6. Match Format (5)    - BO1/BO3/BO5, game number
+  7. Roster Stability (3)- How stable the team roster is
+  8. Meta (1)            - Match recency / meta stability
+  Total: 33 features
 """
 
 import math
@@ -80,29 +91,20 @@ def extract_recent_form_features(
          rad_weighted_wr, dire_weighted_wr,
          rad_streak, dire_streak,
          rad_momentum, dire_momentum]
-
-    The momentum feature captures short-term form (last 5 matches)
-    with aggressive decay (half_life=7 days), making yesterday's
-    results much more impactful than the broader n_recent window.
     """
     def _form(team_data: dict) -> tuple[float, float, float, float]:
         matches = team_data.get("matches", [])[:n_recent]
         if not matches:
             return 0.5, 0.5, 0.0, 0.5
 
-        # Ensure newest-first ordering
         matches = sorted(matches, key=lambda m: m.get("start_time", 0), reverse=True)
 
         now = time.time()
         wins = 0
         weighted_wins = 0.0
         weighted_total = 0.0
-
-        # Short-term momentum (last 5 matches, aggressive 7-day decay)
         momentum_wins = 0.0
         momentum_total = 0.0
-
-        # Current streak: count consecutive W or L from most recent match
         streak = 0
         streak_done = False
 
@@ -111,7 +113,6 @@ def extract_recent_form_features(
             if is_win:
                 wins += 1
 
-            # Time-weighted form (30-day half-life)
             start_time = m.get("start_time", now)
             days_ago = max(0, (now - start_time) / 86400)
             w = _decay_weight(days_ago)
@@ -119,14 +120,12 @@ def extract_recent_form_features(
             if is_win:
                 weighted_wins += w
 
-            # Short-term momentum (first 5 matches, 7-day half-life)
             if i < 5:
                 mw = _decay_weight(days_ago, half_life=7.0)
                 momentum_total += mw
                 if is_win:
                     momentum_wins += mw
 
-            # Current streak (from most recent match backwards)
             if not streak_done:
                 if streak == 0:
                     streak = 1 if is_win else -1
@@ -146,7 +145,7 @@ def extract_recent_form_features(
     return [
         rad_wr, dire_wr, rad_wr - dire_wr,
         rad_wwr, dire_wwr,
-        rad_streak / 10.0, dire_streak / 10.0,  # normalize streak
+        rad_streak / 10.0, dire_streak / 10.0,
         rad_mom, dire_mom,
     ]
 
@@ -168,12 +167,9 @@ def extract_h2h_features(
         [h2h_games, h2h_rad_winrate, h2h_recent_rad_wr]
     """
     rad_matches = radiant_team.get("matches", [])
-
-    # Ensure newest-first ordering
     rad_matches = sorted(rad_matches, key=lambda m: m.get("start_time", 0), reverse=True)
 
-    # Collect all h2h matches, newest first
-    h2h_matches: list[bool] = []  # True = radiant team won
+    h2h_matches: list[bool] = []
     for m in rad_matches:
         opposing_id = m.get("opposing_team_id")
         if opposing_id == dire_team_id:
@@ -184,127 +180,74 @@ def extract_h2h_features(
     h2h_rad_wins = sum(h2h_matches)
     h2h_wr = _safe_div(h2h_rad_wins, h2h_total, 0.5)
 
-    # Recent h2h: last 10 matches (already newest-first)
     recent = h2h_matches[:10]
     h2h_recent_wr = _safe_div(sum(recent), len(recent), 0.5) if recent else h2h_wr
 
     return [
-        min(h2h_total, 30) / 30.0,  # normalize game count
+        min(h2h_total, 30) / 30.0,
         h2h_wr,
         h2h_recent_wr,
     ]
 
 
 # ---------------------------------------------------------------------------
-# 4. Hero Draft Features
+# 4. Player Strength Features (NEW - replaces draft)
 # ---------------------------------------------------------------------------
 
-def extract_draft_features(
-    match_data: dict,
-    hero_stats: dict,
+def extract_player_features(
+    radiant_team: dict,
+    dire_team: dict,
 ) -> list[float]:
     """
-    Features based on hero picks and bans.
+    Features based on individual player performance and hero pools.
+
+    Uses team player data (win rates of current roster) and
+    team hero data (diversity of hero pool) as pre-match signals.
 
     Returns:
-        [rad_draft_wr, dire_draft_wr, draft_wr_diff,
-         rad_synergy, dire_synergy,
-         rad_roles_balanced, dire_roles_balanced,
-         rad_avg_pro_pickrate, dire_avg_pro_pickrate]
+        [rad_player_winrate, dire_player_winrate, player_wr_diff,
+         rad_hero_pool, dire_hero_pool, hero_pool_diff]
     """
-    picks_bans = match_data.get("picks_bans") or []
-    heroes_data = hero_stats.get("heroes", {})
+    def _player_stats(team_data: dict) -> tuple[float, float]:
+        # Player win rate from current roster
+        players = team_data.get("players", [])
+        current = [p for p in players if p.get("is_current_team_member", False)]
+        if not current:
+            current = players[:5]
 
-    radiant_picks = []
-    dire_picks = []
-
-    for pb in picks_bans:
-        if not pb.get("is_pick"):
-            continue
-        hero_id = pb.get("hero_id")
-        team = pb.get("team")  # 0 = radiant, 1 = dire
-        if team == 0:
-            radiant_picks.append(hero_id)
+        if current:
+            winrates = []
+            for p in current:
+                games = p.get("games_played", 0)
+                wins = p.get("wins", 0)
+                if games >= 5:
+                    winrates.append(wins / games)
+            player_wr = np.mean(winrates) if winrates else 0.5
         else:
-            dire_picks.append(hero_id)
+            player_wr = 0.5
 
-    # Also try to extract from player data if picks_bans is empty
-    if not radiant_picks and not dire_picks:
-        players = match_data.get("players", [])
-        for p in players:
-            hero_id = p.get("hero_id")
-            if hero_id:
-                slot = p.get("player_slot", 0)
-                if slot < 128:
-                    radiant_picks.append(hero_id)
-                else:
-                    dire_picks.append(hero_id)
+        # Hero pool depth: how many heroes the team plays competently
+        heroes = team_data.get("heroes", [])
+        if heroes:
+            # Count heroes with >= 3 games and > 40% win rate
+            viable_heroes = sum(
+                1 for h in heroes
+                if h.get("games_played", 0) >= 3
+                and _safe_div(h.get("wins", 0), h.get("games_played", 1), 0) > 0.4
+            )
+            # Normalize: 30 viable heroes = 0.5, 60+ = 1.0
+            hero_pool = min(viable_heroes / 60.0, 1.0)
+        else:
+            hero_pool = 0.3  # neutral default
 
-    def _draft_stats(picks: list[int]) -> tuple[float, float, float]:
-        if not picks:
-            return 0.5, 0.0, 0.0
-        winrates = []
-        pickrates = []
-        roles = set()
-        for hid in picks:
-            h = heroes_data.get(hid, heroes_data.get(str(hid), {}))
-            winrates.append(h.get("pro_winrate", 0.5))
-            total_games = h.get("pro_pick", 0) + h.get("pro_ban", 0)
-            pickrates.append(min(total_games / 1000.0, 1.0))
-            for r in h.get("roles", []):
-                roles.add(r)
+        return float(player_wr), float(hero_pool)
 
-        avg_wr = np.mean(winrates) if winrates else 0.5
-        avg_pr = np.mean(pickrates) if pickrates else 0.0
-        # Role balance: more unique roles = more balanced
-        role_balance = min(len(roles), 8) / 8.0
-        return avg_wr, role_balance, avg_pr
-
-    rad_wr, rad_roles, rad_pr = _draft_stats(radiant_picks)
-    dire_wr, dire_roles, dire_pr = _draft_stats(dire_picks)
-
-    # Simple synergy: hero pair win rate correlation
-    def _pair_synergy(picks: list[int]) -> float:
-        if len(picks) < 2:
-            return 0.0
-        # Use role diversity as a proxy for synergy
-        roles_list = []
-        for hid in picks:
-            h = heroes_data.get(hid, heroes_data.get(str(hid), {}))
-            roles_list.extend(h.get("roles", []))
-        # More diverse roles = better synergy
-        unique_ratio = len(set(roles_list)) / max(len(roles_list), 1)
-        return unique_ratio
-
-    rad_syn = _pair_synergy(radiant_picks)
-    dire_syn = _pair_synergy(dire_picks)
-
-    # Counter-pick advantage: how well does each team's draft perform vs opponents?
-    matchups = hero_stats.get("matchups", {})
-
-    def _counter_advantage(my_picks: list[int], enemy_picks: list[int]) -> float:
-        """Average winrate of my heroes against each enemy hero (from matchup data)."""
-        if not my_picks or not enemy_picks or not matchups:
-            return 0.0
-        wrs = []
-        for my_hid in my_picks:
-            hero_mu = matchups.get(my_hid, matchups.get(str(my_hid), {}))
-            for en_hid in enemy_picks:
-                mu = hero_mu.get(en_hid, hero_mu.get(str(en_hid)))
-                if mu and mu.get("games_played", 0) >= 10:
-                    wrs.append(mu["wins"] / mu["games_played"])
-        return (np.mean(wrs) - 0.5) if wrs else 0.0  # center around 0
-
-    rad_counter = _counter_advantage(radiant_picks, dire_picks)
-    dire_counter = _counter_advantage(dire_picks, radiant_picks)
-    counter_diff = rad_counter - dire_counter
+    rad_wr, rad_pool = _player_stats(radiant_team)
+    dire_wr, dire_pool = _player_stats(dire_team)
 
     return [
         rad_wr, dire_wr, rad_wr - dire_wr,
-        rad_syn, dire_syn,
-        rad_roles, dire_roles,
-        rad_pr, dire_pr,
-        counter_diff,
+        rad_pool, dire_pool, rad_pool - dire_pool,
     ]
 
 
@@ -319,7 +262,6 @@ def extract_map_side_features(is_radiant_first_pick: bool = True) -> list[float]
     Returns:
         [radiant_advantage, first_pick_advantage]
     """
-    # Radiant advantage in pro matches (~1-2% in recent patches, trending down)
     radiant_adv = 0.015
     first_pick_adv = 0.008 if is_radiant_first_pick else -0.008
     return [radiant_adv, first_pick_adv]
@@ -341,9 +283,6 @@ def extract_format_features(
 
     Returns:
         [is_bo1, is_bo3, is_bo5, game_number_norm, is_decider]
-
-    Note: BO2 is treated as closest to BO3 for model compatibility
-    (all three binary flags are 0, so the model sees a neutral format signal).
     """
     is_bo1 = 1.0 if series_type == 0 else 0.0
     is_bo3 = 1.0 if series_type == 1 else 0.0
@@ -377,13 +316,9 @@ def extract_roster_features(
 
         current_players = [p for p in players if p.get("is_current_team_member", False)]
         if not current_players:
-            # Fallback: use last 5 players
             current_players = players[:5]
 
-        # How many games played together as a team
         games_together = sum(p.get("games_played", 0) for p in current_players)
-        # Log scale: 1 game = 0.0, ~50 games = 0.5, ~500 games = 0.8, ~2500 = 1.0
-        # This preserves signal across all tiers instead of saturating at 500
         stability = min(math.log1p(games_together) / math.log1p(2500), 1.0)
         return stability
 
@@ -391,6 +326,35 @@ def extract_roster_features(
     dire_stab = _stability(dire_team)
 
     return [rad_stab, dire_stab, rad_stab - dire_stab]
+
+
+# ---------------------------------------------------------------------------
+# 8. Meta / Recency Features (NEW)
+# ---------------------------------------------------------------------------
+
+def extract_meta_features(
+    match_data: dict = None,
+    reference_time: float = None,
+) -> list[float]:
+    """
+    Feature capturing how recent the data is relative to current meta.
+
+    For training: uses match start_time to weight recent matches higher.
+    For prediction: returns a neutral value (recency handled via sample weights).
+
+    Returns:
+        [match_recency]
+    """
+    if reference_time is None:
+        reference_time = time.time()
+
+    if match_data and match_data.get("start_time"):
+        days_ago = max(0, (reference_time - match_data["start_time"]) / 86400)
+        recency = _decay_weight(days_ago, half_life=config.PATCH_HALF_LIFE_DAYS)
+    else:
+        recency = 1.0  # prediction time = most recent
+
+    return [recency]
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +372,7 @@ def extract_features(
     game_number: int = 1,
 ) -> np.ndarray:
     """
-    Extract complete feature vector for a match.
+    Extract complete feature vector for a match (pre-match only).
 
     Returns numpy array of shape (N_FEATURES,).
     """
@@ -417,7 +381,7 @@ def extract_features(
     # 1. Team rating (4 features)
     features.extend(extract_team_rating_features(radiant_team, dire_team))
 
-    # 2. Recent form (7 features)
+    # 2. Recent form (9 features)
     features.extend(extract_recent_form_features(radiant_team, dire_team))
 
     # 3. Head-to-head (3 features)
@@ -425,8 +389,8 @@ def extract_features(
         radiant_team, dire_team, radiant_team_id, dire_team_id
     ))
 
-    # 4. Hero draft (9 features)
-    features.extend(extract_draft_features(match_data, hero_stats))
+    # 4. Player strength (6 features) — replaces draft
+    features.extend(extract_player_features(radiant_team, dire_team))
 
     # 5. Map side (2 features)
     features.extend(extract_map_side_features())
@@ -437,34 +401,36 @@ def extract_features(
     # 7. Roster stability (3 features)
     features.extend(extract_roster_features(radiant_team, dire_team))
 
+    # 8. Meta recency (1 feature)
+    features.extend(extract_meta_features(match_data))
+
     return np.array(features, dtype=np.float64)
 
 
 def get_feature_names() -> list[str]:
     """Return names for all features in the same order as extract_features."""
     return [
-        # Team rating
+        # Team rating (4)
         "rating_diff", "elo_win_prob", "rad_rating_norm", "dire_rating_norm",
-        # Recent form
+        # Recent form (9)
         "rad_winrate", "dire_winrate", "form_diff",
         "rad_weighted_wr", "dire_weighted_wr",
         "rad_streak", "dire_streak",
         "rad_momentum", "dire_momentum",
-        # Head-to-head
+        # Head-to-head (3)
         "h2h_games", "h2h_rad_winrate", "h2h_recent_rad_wr",
-        # Hero draft
-        "rad_draft_wr", "dire_draft_wr", "draft_wr_diff",
-        "rad_synergy", "dire_synergy",
-        "rad_roles_balanced", "dire_roles_balanced",
-        "rad_avg_pro_pickrate", "dire_avg_pro_pickrate",
-        "counter_pick_advantage",
-        # Map side
+        # Player strength (6)
+        "rad_player_winrate", "dire_player_winrate", "player_wr_diff",
+        "rad_hero_pool", "dire_hero_pool", "hero_pool_diff",
+        # Map side (2)
         "radiant_advantage", "first_pick_advantage",
-        # Match format
+        # Match format (5)
         "is_bo1", "is_bo3", "is_bo5", "game_number_norm", "is_decider",
-        # Roster stability
+        # Roster stability (3)
         "rad_roster_stability", "dire_roster_stability", "stability_diff",
+        # Meta (1)
+        "match_recency",
     ]
 
 
-N_FEATURES = len(get_feature_names())  # 36 features
+N_FEATURES = len(get_feature_names())  # 33 features

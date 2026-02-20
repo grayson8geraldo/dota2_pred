@@ -1,883 +1,544 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dota 2 Match Predictor</title>
     <style>
-        :root {
-            --bg: #0e0e12;
-            --card: #1a1a24;
-            --border: #2a2a3a;
-            --accent: #e44d26;
-            --accent2: #4fc3f7;
-            --green: #4caf50;
-            --red: #f44336;
-            --yellow: #ffb300;
-            --text: #e0e0e0;
-            --text2: #888;
-            --radiant: #92c347;
-            --dire: #c23c2a;
-        }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         body {
-            background: var(--bg);
-            color: var(--text);
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0e1015;
+            color: #c5c8cc;
             min-height: 100vh;
         }
-
         .header {
+            background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
+            border-bottom: 2px solid #e74c3c;
+            padding: 20px;
             text-align: center;
-            padding: 40px 20px 20px;
-            background: linear-gradient(180deg, #12121a 0%, var(--bg) 100%);
         }
-
         .header h1 {
-            font-size: 2.2rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            color: #e74c3c;
+            font-size: 1.8em;
+            letter-spacing: 2px;
         }
-
         .header p {
-            color: var(--text2);
-            margin-top: 8px;
-            font-size: 0.95rem;
+            color: #888;
+            font-size: 0.85em;
+            margin-top: 4px;
         }
-
-        .container {
-            max-width: 800px;
+        .tabs {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            background: #151921;
+            padding: 10px 20px 0;
+        }
+        .tab {
+            padding: 10px 24px;
+            background: #1a1f2e;
+            border: 1px solid #2a2f3e;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            color: #888;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+        .tab:hover { color: #ccc; background: #222738; }
+        .tab.active {
+            background: #1e2433;
+            color: #e74c3c;
+            border-color: #e74c3c;
+            border-bottom: 2px solid #1e2433;
+        }
+        .content {
+            max-width: 900px;
             margin: 0 auto;
             padding: 20px;
         }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 4px;
-            margin-bottom: 24px;
-            background: var(--card);
-            border-radius: 12px;
-            padding: 4px;
-        }
-
-        .tab {
-            flex: 1;
-            padding: 12px;
-            text-align: center;
-            border-radius: 10px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.2s;
-            border: none;
-            background: transparent;
-            color: var(--text2);
-        }
-
-        .tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
-        .tab.active { background: var(--accent); color: white; }
-
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        /* Predict Form */
-        .predict-form {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 32px;
-        }
-
-        .vs-layout {
-            display: grid;
-            grid-template-columns: 1fr auto 1fr;
-            gap: 16px;
-            align-items: end;
-            margin-bottom: 24px;
-        }
-
-        .team-input label {
-            display: block;
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 8px;
-        }
-
-        .team-input.radiant label { color: var(--radiant); }
-        .team-input.dire label { color: var(--dire); }
-
-        .team-input input {
-            width: 100%;
-            padding: 14px 16px;
-            border-radius: 10px;
-            border: 2px solid var(--border);
-            background: var(--bg);
-            color: var(--text);
-            font-size: 1rem;
-            transition: border-color 0.2s;
-        }
-
-        .team-input input:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-
-        .vs-text {
-            font-size: 1.5rem;
-            font-weight: 800;
-            color: var(--text2);
-            padding-bottom: 14px;
-            text-align: center;
-        }
-
-        .form-row {
-            display: flex;
-            gap: 16px;
-            align-items: end;
-        }
-
-        .format-select {
-            flex: 1;
-        }
-
-        .format-select label {
-            display: block;
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 8px;
-            color: var(--text2);
-        }
-
-        .format-options {
-            display: flex;
-            gap: 8px;
-        }
-
-        .format-btn {
-            flex: 1;
-            padding: 12px;
+        .panel { display: none; }
+        .panel.active { display: block; }
+        .card {
+            background: #1a1f2e;
+            border: 1px solid #2a2f3e;
             border-radius: 8px;
-            border: 2px solid var(--border);
-            background: var(--bg);
-            color: var(--text2);
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: center;
-        }
-
-        .format-btn:hover { border-color: var(--accent); color: var(--text); }
-        .format-btn.active { border-color: var(--accent); background: var(--accent); color: white; }
-
-        .predict-btn {
-            flex: 1;
-            padding: 14px 32px;
-            border-radius: 10px;
-            border: none;
-            background: linear-gradient(135deg, var(--accent) 0%, #f4511e 100%);
-            color: white;
-            font-size: 1rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: transform 0.1s, box-shadow 0.2s;
-        }
-
-        .predict-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 20px rgba(228, 77, 38, 0.4);
-        }
-
-        .predict-btn:active { transform: translateY(0); }
-        .predict-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-        /* Result */
-        .result {
-            margin-top: 24px;
-            display: none;
-        }
-
-        .result.show { display: block; }
-
-        .result-card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            overflow: hidden;
-        }
-
-        .result-header {
-            padding: 20px 24px;
-            text-align: center;
-            font-weight: 700;
-            font-size: 1.1rem;
-        }
-
-        .result-header.high { background: linear-gradient(135deg, rgba(76,175,80,0.2), rgba(76,175,80,0.05)); }
-        .result-header.medium { background: linear-gradient(135deg, rgba(255,179,0,0.2), rgba(255,179,0,0.05)); }
-        .result-header.low { background: linear-gradient(135deg, rgba(244,67,54,0.2), rgba(244,67,54,0.05)); }
-
-        .result-body { padding: 24px; }
-
-        .teams-result {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-
-        .team-box {
             padding: 20px;
-            border-radius: 12px;
-            text-align: center;
-            border: 2px solid var(--border);
-            position: relative;
+            margin-bottom: 16px;
         }
-
-        .team-box.winner {
-            border-color: var(--green);
-            background: rgba(76, 175, 80, 0.08);
+        input, select, button {
+            font-family: inherit;
+            font-size: 0.95em;
         }
-
-        .team-box .team-name {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin-bottom: 4px;
-        }
-
-        .team-box .team-side {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 12px;
-        }
-
-        .team-box.radiant .team-side { color: var(--radiant); }
-        .team-box.dire .team-side { color: var(--dire); }
-
-        .team-box .prob {
-            font-size: 2rem;
-            font-weight: 800;
-        }
-
-        .team-box.winner .prob { color: var(--green); }
-
-        .winner-badge {
-            position: absolute;
-            top: -10px;
-            right: -10px;
-            background: var(--green);
-            color: white;
-            font-size: 0.7rem;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 20px;
-            text-transform: uppercase;
-        }
-
-        /* Probability bar */
-        .prob-bar-container {
-            margin-bottom: 24px;
-        }
-
-        .prob-bar {
-            height: 12px;
+        input[type="text"], select {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0e1015;
+            border: 1px solid #2a2f3e;
             border-radius: 6px;
-            overflow: hidden;
-            display: flex;
-            background: var(--bg);
+            color: #c5c8cc;
+            margin-bottom: 10px;
         }
-
-        .prob-bar .radiant-fill {
-            background: linear-gradient(90deg, var(--radiant), #a8d648);
-            transition: width 0.6s ease;
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #e74c3c;
         }
-
-        .prob-bar .dire-fill {
-            background: linear-gradient(90deg, #d43f2f, var(--dire));
-            transition: width 0.6s ease;
-        }
-
-        .prob-labels {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 6px;
-            font-size: 0.8rem;
-            color: var(--text2);
-        }
-
-        /* Factors */
-        .factors {
-            border-top: 1px solid var(--border);
-            padding-top: 20px;
-        }
-
-        .factors h3 {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--text2);
-            margin-bottom: 12px;
-        }
-
-        .factor-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            font-size: 0.9rem;
-        }
-
-        .factor-label { color: var(--text2); }
-        .factor-value { font-weight: 600; }
-
-        /* Loading */
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 40px;
-        }
-
-        .loading.show { display: block; }
-
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid var(--border);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto 16px;
-        }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* Live */
-        .live-list { display: flex; flex-direction: column; gap: 16px; }
-
-        .live-empty {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--text2);
-            background: var(--card);
-            border-radius: 16px;
-            border: 1px solid var(--border);
-        }
-
-        /* Team lookup */
-        .team-search {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 24px;
-        }
-
-        .search-row {
-            display: flex;
-            gap: 12px;
-        }
-
-        .search-row input {
-            flex: 1;
-            padding: 14px 16px;
-            border-radius: 10px;
-            border: 2px solid var(--border);
-            background: var(--bg);
-            color: var(--text);
-            font-size: 1rem;
-        }
-
-        .search-row input:focus { outline: none; border-color: var(--accent); }
-
-        .search-btn {
-            padding: 14px 24px;
-            border-radius: 10px;
+        .btn {
+            background: #e74c3c;
+            color: white;
             border: none;
-            background: var(--accent2);
-            color: #000;
-            font-weight: 700;
+            padding: 10px 24px;
+            border-radius: 6px;
             cursor: pointer;
-            transition: opacity 0.2s;
+            font-weight: 600;
+            transition: all 0.2s;
         }
-
-        .search-btn:hover { opacity: 0.85; }
-
-        .team-info {
-            margin-top: 20px;
-            display: none;
+        .btn:hover { background: #c0392b; }
+        .btn:disabled { background: #555; cursor: not-allowed; }
+        .btn-secondary {
+            background: #2a2f3e;
+            color: #ccc;
         }
-
-        .team-info.show { display: block; }
-
-        .team-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 12px;
-        }
-
-        .stat-box {
-            background: var(--bg);
-            border-radius: 10px;
-            padding: 16px;
-            text-align: center;
-        }
-
-        .stat-box .stat-value {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: var(--accent2);
-        }
-
-        .stat-box .stat-label {
-            font-size: 0.75rem;
-            color: var(--text2);
+        .btn-secondary:hover { background: #3a3f4e; }
+        .row { display: flex; gap: 12px; align-items: end; }
+        .row > div { flex: 1; }
+        label {
+            display: block;
+            color: #888;
+            font-size: 0.8em;
+            margin-bottom: 4px;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin-top: 4px;
         }
-
-        /* Error */
-        .error-msg {
-            background: rgba(244, 67, 54, 0.1);
-            border: 1px solid var(--red);
-            border-radius: 10px;
+        .prediction-result {
+            margin-top: 20px;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .winner-banner {
+            text-align: center;
             padding: 16px;
-            color: var(--red);
-            margin-top: 16px;
-            display: none;
+            border-radius: 8px;
+            margin-bottom: 16px;
         }
-
-        .error-msg.show { display: block; }
-
-        /* Responsive */
-        @media (max-width: 600px) {
-            .vs-layout {
-                grid-template-columns: 1fr;
-                gap: 8px;
-            }
-            .vs-text { padding: 0; }
-            .form-row { flex-direction: column; }
-            .teams-result { grid-template-columns: 1fr; }
+        .winner-banner.high { background: linear-gradient(135deg, #1a4a2e, #0e1015); border: 1px solid #27ae60; }
+        .winner-banner.medium { background: linear-gradient(135deg, #4a3a1a, #0e1015); border: 1px solid #f39c12; }
+        .winner-banner.low { background: linear-gradient(135deg, #3a1a1a, #0e1015); border: 1px solid #888; }
+        .winner-name { font-size: 1.4em; font-weight: 700; color: #fff; }
+        .winner-prob { font-size: 1.1em; color: #aaa; margin-top: 4px; }
+        .conf-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+            margin-left: 8px;
         }
+        .conf-HIGH { background: #27ae60; color: #fff; }
+        .conf-MEDIUM { background: #f39c12; color: #fff; }
+        .conf-LOW { background: #555; color: #ccc; }
+        .prob-bar-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 6px 0;
+        }
+        .prob-bar-label { width: 120px; text-align: right; font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .prob-bar-track { flex: 1; height: 24px; background: #0e1015; border-radius: 4px; overflow: hidden; }
+        .prob-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+        .prob-bar-fill.radiant { background: linear-gradient(90deg, #27ae60, #2ecc71); }
+        .prob-bar-fill.dire { background: linear-gradient(90deg, #e74c3c, #c0392b); }
+        .prob-bar-pct { width: 50px; font-size: 0.85em; font-weight: 600; }
+        .factors { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .factor { padding: 8px 12px; background: #0e1015; border-radius: 6px; font-size: 0.8em; }
+        .factor-label { color: #888; font-size: 0.75em; text-transform: uppercase; }
+        .factor-value { color: #ccc; margin-top: 2px; }
+        .match-card {
+            padding: 12px 16px;
+            background: #0e1015;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: 1px solid transparent;
+        }
+        .match-card:hover { border-color: #2a2f3e; background: #151921; }
+        .match-teams { font-size: 0.9em; }
+        .match-teams strong { color: #fff; }
+        .match-meta { text-align: right; font-size: 0.8em; }
+        .match-winner { color: #27ae60; font-weight: 600; }
+        .league-header { color: #e74c3c; font-size: 0.85em; margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #2a2f3e; }
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #555; border-top-color: #e74c3c; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error { color: #e74c3c; padding: 12px; background: #2a1a1a; border-radius: 6px; margin-top: 12px; }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .stat-box { background: #0e1015; border-radius: 6px; padding: 14px; text-align: center; }
+        .stat-value { font-size: 1.5em; font-weight: 700; color: #fff; }
+        .stat-label { font-size: 0.75em; color: #888; text-transform: uppercase; margin-top: 4px; }
+        .stat-value.green { color: #27ae60; }
+        .stat-value.yellow { color: #f39c12; }
+        .stat-value.red { color: #e74c3c; }
+        table.data-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        table.data-table th { text-align: left; color: #888; padding: 8px; border-bottom: 1px solid #2a2f3e; font-size: 0.8em; text-transform: uppercase; }
+        table.data-table td { padding: 8px; border-bottom: 1px solid #1a1f2e; }
+        .status-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7em; font-weight: 600; }
+        .status-UPCOMING { background: #2a3f5e; color: #5dade2; }
+        .status-TODAY { background: #2a4a2e; color: #27ae60; }
     </style>
 </head>
 <body>
+    <div class="header">
+        <h1>DOTA 2 MATCH PREDICTOR</h1>
+        <p>Pre-match predictions powered by ML ensemble (LightGBM + LR)</p>
+    </div>
 
-<div class="header">
-    <h1>DOTA 2 PREDICTOR</h1>
-    <p>ML-powered match outcome predictions for professional Dota 2</p>
-</div>
-
-<div class="container">
-
-    <!-- Tabs -->
     <div class="tabs">
-        <button class="tab active" data-tab="predict">Predict Match</button>
-        <button class="tab" data-tab="today">Today's Matches</button>
-        <button class="tab" data-tab="live">Live Matches</button>
-        <button class="tab" data-tab="team">Team Lookup</button>
+        <div class="tab active" data-tab="predict">Predict Match</div>
+        <div class="tab" data-tab="today">Today's Matches</div>
+        <div class="tab" data-tab="team">Team Lookup</div>
+        <div class="tab" data-tab="accuracy">Accuracy</div>
     </div>
 
-    <!-- Predict Tab -->
-    <div class="tab-content active" id="tab-predict">
-        <div class="predict-form">
-            <div class="vs-layout">
-                <div class="team-input radiant">
-                    <label>Radiant</label>
-                    <input type="text" id="radiant-name" placeholder="e.g. Team Spirit" autocomplete="off">
+    <div class="content">
+        <!-- Predict Match Panel -->
+        <div class="panel active" id="panel-predict">
+            <div class="card">
+                <div class="row">
+                    <div>
+                        <label>Radiant Team</label>
+                        <input type="text" id="radiant-input" placeholder="e.g. Team Spirit">
+                    </div>
+                    <div>
+                        <label>Dire Team</label>
+                        <input type="text" id="dire-input" placeholder="e.g. Tundra Esports">
+                    </div>
+                    <div style="flex:0.5">
+                        <label>Format</label>
+                        <select id="format-select">
+                            <option value="BO3" selected>BO3</option>
+                            <option value="BO1">BO1</option>
+                            <option value="BO5">BO5</option>
+                            <option value="BO2">BO2</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="vs-text">VS</div>
-                <div class="team-input dire">
-                    <label>Dire</label>
-                    <input type="text" id="dire-name" placeholder="e.g. Tundra Esports" autocomplete="off">
+                <button class="btn" id="predict-btn" onclick="predictMatch()">Predict</button>
+            </div>
+            <div id="predict-result"></div>
+        </div>
+
+        <!-- Today's Matches Panel -->
+        <div class="panel" id="panel-today">
+            <div class="card">
+                <div class="row">
+                    <div>
+                        <label>Min Team Rating</label>
+                        <input type="text" id="today-rating" placeholder="1100 (default)" value="">
+                    </div>
+                    <div style="flex:0.5">
+                        <button class="btn" onclick="loadToday()">Load Matches</button>
+                    </div>
+                    <div style="flex:0.5">
+                        <button class="btn btn-secondary" onclick="loadToday(true)">Show All</button>
+                    </div>
                 </div>
             </div>
-            <div class="form-row">
-                <div class="format-select">
-                    <label>Format</label>
-                    <div class="format-options">
-                        <button class="format-btn" data-format="BO1">BO1</button>
-                        <button class="format-btn active" data-format="BO3">BO3</button>
-                        <button class="format-btn" data-format="BO5">BO5</button>
+            <div id="today-result"></div>
+        </div>
+
+        <!-- Team Lookup Panel -->
+        <div class="panel" id="panel-team">
+            <div class="card">
+                <div class="row">
+                    <div>
+                        <label>Team Name</label>
+                        <input type="text" id="team-input" placeholder="e.g. Gaimin Gladiators">
                     </div>
-                </div>
-                <button class="predict-btn" id="predict-btn">PREDICT</button>
-            </div>
-        </div>
-
-        <div class="error-msg" id="predict-error"></div>
-
-        <div class="loading" id="predict-loading">
-            <div class="spinner"></div>
-            <p>Analyzing teams and calculating prediction...</p>
-        </div>
-
-        <div class="result" id="predict-result"></div>
-    </div>
-
-    <!-- Today Tab -->
-    <div class="tab-content" id="tab-today">
-        <div style="text-align:center;margin-bottom:20px;">
-            <button class="predict-btn" id="today-btn" style="display:inline-block;">Load Today's Matches</button>
-        </div>
-        <div class="loading" id="today-loading">
-            <div class="spinner"></div>
-            <p>Analyzing today's matches...</p>
-        </div>
-        <div class="error-msg" id="today-error"></div>
-        <div id="today-summary" style="display:none;text-align:center;margin-bottom:20px;"></div>
-        <div class="live-list" id="today-list"></div>
-    </div>
-
-    <!-- Live Tab -->
-    <div class="tab-content" id="tab-live">
-        <div style="text-align:center;margin-bottom:20px;">
-            <button class="predict-btn" id="live-btn" style="display:inline-block;">Load Live Matches</button>
-        </div>
-        <div class="loading" id="live-loading">
-            <div class="spinner"></div>
-            <p>Fetching live matches...</p>
-        </div>
-        <div class="error-msg" id="live-error"></div>
-        <div class="live-list" id="live-list"></div>
-    </div>
-
-    <!-- Team Tab -->
-    <div class="tab-content" id="tab-team">
-        <div class="team-search">
-            <div class="search-row">
-                <input type="text" id="team-name" placeholder="Enter team name..." autocomplete="off">
-                <button class="search-btn" id="team-btn">Search</button>
-            </div>
-        </div>
-        <div class="error-msg" id="team-error"></div>
-        <div class="team-info" id="team-info"></div>
-    </div>
-
-</div>
-
-<script>
-// --- Tabs ---
-document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-    });
-});
-
-// --- Format buttons ---
-let selectedFormat = 'BO3';
-document.querySelectorAll('.format-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        selectedFormat = btn.dataset.format;
-    });
-});
-
-// --- Predict ---
-document.getElementById('predict-btn').addEventListener('click', predict);
-document.getElementById('radiant-name').addEventListener('keydown', e => { if (e.key === 'Enter') predict(); });
-document.getElementById('dire-name').addEventListener('keydown', e => { if (e.key === 'Enter') predict(); });
-
-async function predict() {
-    const radiant = document.getElementById('radiant-name').value.trim();
-    const dire = document.getElementById('dire-name').value.trim();
-
-    if (!radiant || !dire) {
-        showError('predict-error', 'Enter both team names');
-        return;
-    }
-
-    hideError('predict-error');
-    document.getElementById('predict-result').classList.remove('show');
-    document.getElementById('predict-loading').classList.add('show');
-    document.getElementById('predict-btn').disabled = true;
-
-    try {
-        const resp = await fetch('/api/predict', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ radiant, dire, format: selectedFormat }),
-        });
-        const data = await resp.json();
-
-        if (data.error) {
-            showError('predict-error', data.error);
-        } else {
-            renderPrediction(data);
-        }
-    } catch (err) {
-        showError('predict-error', 'Request failed: ' + err.message);
-    } finally {
-        document.getElementById('predict-loading').classList.remove('show');
-        document.getElementById('predict-btn').disabled = false;
-    }
-}
-
-function renderPrediction(d) {
-    const radIsWinner = d.radiant_win_prob >= 0.5;
-    const confClass = d.confidence === 'HIGH' ? 'high' : d.confidence === 'MEDIUM' ? 'medium' : 'low';
-    const confLabel = d.confidence === 'HIGH' ? 'High Confidence' : d.confidence === 'MEDIUM' ? 'Moderate Confidence' : 'Low Confidence';
-    const radPct = (d.radiant_win_prob * 100).toFixed(1);
-    const direPct = (d.dire_win_prob * 100).toFixed(1);
-
-    const bd = d.breakdown || {};
-    const tr = bd.team_ratings || {};
-    const rf = bd.recent_form || {};
-    const h2h = bd.h2h || {};
-
-    let factorsHtml = '';
-    if (tr.radiant) factorsHtml += factorRow('Team Rating (Radiant)', tr.radiant);
-    if (tr.dire) factorsHtml += factorRow('Team Rating (Dire)', tr.dire);
-    if (tr.elo_win_prob) factorsHtml += factorRow('Elo Win Probability', tr.elo_win_prob);
-    if (rf.radiant_winrate) factorsHtml += factorRow('Recent Form (Radiant)', rf.radiant_winrate);
-    if (rf.dire_winrate) factorsHtml += factorRow('Recent Form (Dire)', rf.dire_winrate);
-    if (h2h.games != null) factorsHtml += factorRow('H2H Games Played', h2h.games);
-    if (h2h.games > 0) factorsHtml += factorRow('H2H Radiant WR', h2h.radiant_winrate);
-    factorsHtml += factorRow('Model', d.model_type);
-    factorsHtml += factorRow('Format', d.series_format);
-
-    const html = `
-        <div class="result-card">
-            <div class="result-header ${confClass}">${confLabel} &mdash; ${d.predicted_winner} wins (${(d.win_probability * 100).toFixed(1)}%)</div>
-            <div class="result-body">
-                <div class="teams-result">
-                    <div class="team-box radiant ${radIsWinner ? 'winner' : ''}">
-                        ${radIsWinner ? '<div class="winner-badge">Winner</div>' : ''}
-                        <div class="team-side">Radiant</div>
-                        <div class="team-name">${esc(d.radiant_team)}</div>
-                        <div class="prob">${radPct}%</div>
+                    <div style="flex:0.3">
+                        <button class="btn" onclick="lookupTeam()">Search</button>
                     </div>
-                    <div class="team-box dire ${!radIsWinner ? 'winner' : ''}">
-                        ${!radIsWinner ? '<div class="winner-badge">Winner</div>' : ''}
-                        <div class="team-side">Dire</div>
-                        <div class="team-name">${esc(d.dire_team)}</div>
-                        <div class="prob">${direPct}%</div>
-                    </div>
-                </div>
-                <div class="prob-bar-container">
-                    <div class="prob-bar">
-                        <div class="radiant-fill" style="width:${radPct}%"></div>
-                        <div class="dire-fill" style="width:${direPct}%"></div>
-                    </div>
-                    <div class="prob-labels">
-                        <span>${esc(d.radiant_team)} ${radPct}%</span>
-                        <span>${direPct}% ${esc(d.dire_team)}</span>
-                    </div>
-                </div>
-                <div class="factors">
-                    <h3>Key Factors</h3>
-                    ${factorsHtml}
                 </div>
             </div>
-        </div>`;
+            <div id="team-result"></div>
+        </div>
 
-    const el = document.getElementById('predict-result');
-    el.innerHTML = html;
-    el.classList.add('show');
-}
+        <!-- Accuracy Panel -->
+        <div class="panel" id="panel-accuracy">
+            <div class="card">
+                <div class="row">
+                    <div>
+                        <label>Period (days)</label>
+                        <select id="accuracy-days">
+                            <option value="7">Last 7 days</option>
+                            <option value="14">Last 14 days</option>
+                            <option value="30" selected>Last 30 days</option>
+                            <option value="90">Last 90 days</option>
+                        </select>
+                    </div>
+                    <div style="flex:0.3">
+                        <button class="btn" onclick="loadAccuracy()">Refresh</button>
+                    </div>
+                </div>
+            </div>
+            <div id="accuracy-result">
+                <div class="loading">Select a period and click Refresh to load accuracy data.</div>
+            </div>
+        </div>
+    </div>
 
-function factorRow(label, value) {
-    return `<div class="factor-row"><span class="factor-label">${esc(String(label))}</span><span class="factor-value">${esc(String(value))}</span></div>`;
-}
-
-// --- Today ---
-document.getElementById('today-btn').addEventListener('click', loadToday);
-
-async function loadToday() {
-    hideError('today-error');
-    document.getElementById('today-loading').classList.add('show');
-    document.getElementById('today-btn').disabled = true;
-    document.getElementById('today-summary').style.display = 'none';
-
-    try {
-        const resp = await fetch('/api/today');
-        const data = await resp.json();
-
-        const list = document.getElementById('today-list');
-        const summary = document.getElementById('today-summary');
-
-        if (!data.length) {
-            list.innerHTML = '<div class="live-empty"><p>No professional matches found for today.</p><p style="margin-top:8px">Try "Predict Match" to manually enter a matchup.</p></div>';
-        } else {
-            const high = data.filter(d => d.confidence === 'HIGH').length;
-            const med = data.filter(d => d.confidence === 'MEDIUM').length;
-            const low = data.length - high - med;
-
-            summary.innerHTML = `
-                <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;display:inline-flex;gap:24px;">
-                    <span><strong>${data.length}</strong> matches</span>
-                    <span style="color:var(--green)"><strong>${high}</strong> high conf.</span>
-                    <span style="color:var(--yellow)"><strong>${med}</strong> medium</span>
-                    <span style="color:var(--red)"><strong>${low}</strong> low</span>
-                </div>`;
-            summary.style.display = 'block';
-
-            // Sort: HIGH first, then by probability
-            data.sort((a, b) => {
-                const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-                const diff = (order[a.confidence] || 2) - (order[b.confidence] || 2);
-                if (diff !== 0) return diff;
-                return b.win_probability - a.win_probability;
+    <script>
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
             });
+        });
 
-            list.innerHTML = data.map(d => {
-                const radPct = (d.radiant_win_prob * 100).toFixed(1);
-                const direPct = (d.dire_win_prob * 100).toFixed(1);
-                const confClass = d.confidence === 'HIGH' ? 'high' : d.confidence === 'MEDIUM' ? 'medium' : 'low';
-                const statusBadge = d.status === 'LIVE' ? ' <span style="color:var(--red);font-weight:700;">LIVE</span>' : '';
-                return `
-                    <div class="result-card">
-                        <div class="result-header ${confClass}">
-                            ${esc(d.league || 'Unknown')}${statusBadge} &mdash;
-                            ${esc(d.predicted_winner)} (${(d.win_probability*100).toFixed(1)}%)
-                            [${d.confidence}]
-                        </div>
-                        <div class="result-body">
-                            <div class="teams-result">
-                                <div class="team-box radiant ${d.radiant_win_prob >= 0.5 ? 'winner' : ''}">
-                                    ${d.radiant_win_prob >= 0.5 ? '<div class="winner-badge">Winner</div>' : ''}
-                                    <div class="team-side">Radiant</div>
-                                    <div class="team-name">${esc(d.radiant_team)}</div>
-                                    <div class="prob">${radPct}%</div>
-                                </div>
-                                <div class="team-box dire ${d.dire_win_prob > 0.5 ? 'winner' : ''}">
-                                    ${d.dire_win_prob > 0.5 ? '<div class="winner-badge">Winner</div>' : ''}
-                                    <div class="team-side">Dire</div>
-                                    <div class="team-name">${esc(d.dire_team)}</div>
-                                    <div class="prob">${direPct}%</div>
-                                </div>
-                            </div>
-                            <div class="prob-bar-container">
-                                <div class="prob-bar">
-                                    <div class="radiant-fill" style="width:${radPct}%"></div>
-                                    <div class="dire-fill" style="width:${direPct}%"></div>
-                                </div>
-                                <div class="prob-labels">
-                                    <span>${esc(d.radiant_team)} ${radPct}%</span>
-                                    <span>${direPct}% ${esc(d.dire_team)}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>`;
-            }).join('');
-        }
-    } catch (err) {
-        showError('today-error', 'Failed to load: ' + err.message);
-    } finally {
-        document.getElementById('today-loading').classList.remove('show');
-        document.getElementById('today-btn').disabled = false;
-    }
-}
+        // Enter key triggers predict
+        ['radiant-input', 'dire-input'].forEach(id => {
+            document.getElementById(id).addEventListener('keypress', e => {
+                if (e.key === 'Enter') predictMatch();
+            });
+        });
+        document.getElementById('team-input').addEventListener('keypress', e => {
+            if (e.key === 'Enter') lookupTeam();
+        });
 
-// --- Live ---
-document.getElementById('live-btn').addEventListener('click', loadLive);
+        async function predictMatch() {
+            const radiant = document.getElementById('radiant-input').value.trim();
+            const dire = document.getElementById('dire-input').value.trim();
+            const format = document.getElementById('format-select').value;
+            const resultDiv = document.getElementById('predict-result');
 
-async function loadLive() {
-    hideError('live-error');
-    document.getElementById('live-loading').classList.add('show');
-    document.getElementById('live-btn').disabled = true;
+            if (!radiant || !dire) {
+                resultDiv.innerHTML = '<div class="error">Enter both team names.</div>';
+                return;
+            }
 
-    try {
-        const resp = await fetch('/api/live');
-        const data = await resp.json();
+            const btn = document.getElementById('predict-btn');
+            btn.disabled = true;
+            resultDiv.innerHTML = '<div class="loading"><span class="spinner"></span>Analyzing teams...</div>';
 
-        const list = document.getElementById('live-list');
-        if (!data.length) {
-            list.innerHTML = '<div class="live-empty"><p>No live professional matches found.</p><p style="margin-top:8px">Try again when pro matches are being played.</p></div>';
-        } else {
-            list.innerHTML = data.map(d => {
-                const radPct = (d.radiant_win_prob * 100).toFixed(1);
-                const direPct = (d.dire_win_prob * 100).toFixed(1);
-                const confClass = d.confidence === 'HIGH' ? 'high' : d.confidence === 'MEDIUM' ? 'medium' : 'low';
-                return `
-                    <div class="result-card">
-                        <div class="result-header ${confClass}">${esc(d.league || 'Unknown League')} &mdash; ${esc(d.predicted_winner)} (${(d.win_probability*100).toFixed(1)}%)</div>
-                        <div class="result-body">
-                            <div class="prob-bar-container">
-                                <div class="prob-bar">
-                                    <div class="radiant-fill" style="width:${radPct}%"></div>
-                                    <div class="dire-fill" style="width:${direPct}%"></div>
-                                </div>
-                                <div class="prob-labels">
-                                    <span>${esc(d.radiant_team)} ${radPct}%</span>
-                                    <span>${direPct}% ${esc(d.dire_team)}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>`;
-            }).join('');
-        }
-    } catch (err) {
-        showError('live-error', 'Failed to load: ' + err.message);
-    } finally {
-        document.getElementById('live-loading').classList.remove('show');
-        document.getElementById('live-btn').disabled = false;
-    }
-}
-
-// --- Team ---
-document.getElementById('team-btn').addEventListener('click', searchTeam);
-document.getElementById('team-name').addEventListener('keydown', e => { if (e.key === 'Enter') searchTeam(); });
-
-async function searchTeam() {
-    const name = document.getElementById('team-name').value.trim();
-    if (!name) { showError('team-error', 'Enter a team name'); return; }
-    hideError('team-error');
-
-    try {
-        const resp = await fetch('/api/team?name=' + encodeURIComponent(name));
-        const data = await resp.json();
-
-        if (data.error) {
-            showError('team-error', data.error);
-            document.getElementById('team-info').classList.remove('show');
-            return;
+            try {
+                const resp = await fetch('/api/predict', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({radiant, dire, format})
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    resultDiv.innerHTML = '<div class="error">' + data.error + '</div>';
+                } else {
+                    resultDiv.innerHTML = renderPrediction(data);
+                }
+            } catch (err) {
+                resultDiv.innerHTML = '<div class="error">Request failed: ' + err.message + '</div>';
+            }
+            btn.disabled = false;
         }
 
-        const el = document.getElementById('team-info');
-        el.innerHTML = `
-            <h2 style="margin:20px 0 16px;font-size:1.3rem;">${esc(data.name)} <span style="color:var(--text2);font-weight:400;">[${esc(data.tag)}]</span></h2>
-            <div class="team-stats">
-                <div class="stat-box"><div class="stat-value">${data.rating || 'N/A'}</div><div class="stat-label">Rating</div></div>
-                <div class="stat-box"><div class="stat-value">${data.wins || 0}</div><div class="stat-label">Wins</div></div>
-                <div class="stat-box"><div class="stat-value">${data.losses || 0}</div><div class="stat-label">Losses</div></div>
-                <div class="stat-box"><div class="stat-value">${(data.winrate * 100).toFixed(1)}%</div><div class="stat-label">Win Rate</div></div>
-                <div class="stat-box"><div class="stat-value">${data.team_id}</div><div class="stat-label">Team ID</div></div>
-            </div>`;
-        el.classList.add('show');
-    } catch (err) {
-        showError('team-error', 'Request failed: ' + err.message);
-    }
-}
+        function renderPrediction(d) {
+            const confClass = d.confidence;
+            const radPct = (d.radiant_win_prob * 100).toFixed(1);
+            const direPct = (d.dire_win_prob * 100).toFixed(1);
+            const bd = d.breakdown || {};
+            const tr = bd.team_ratings || {};
+            const rf = bd.recent_form || {};
+            const h2h = bd.h2h || {};
+            const ps = bd.player_strength || {};
+            const df = bd.data_freshness || {};
 
-// --- Helpers ---
-function showError(id, msg) {
-    const el = document.getElementById(id);
-    el.textContent = msg;
-    el.classList.add('show');
-}
-function hideError(id) {
-    document.getElementById(id).classList.remove('show');
-}
-function esc(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-}
-</script>
+            return '<div class="prediction-result">' +
+                '<div class="winner-banner ' + confClass.toLowerCase() + '">' +
+                    '<div class="winner-name">' + d.predicted_winner +
+                        ' <span class="conf-badge conf-' + confClass + '">' + confClass + '</span></div>' +
+                    '<div class="winner-prob">' + (d.win_probability * 100).toFixed(1) + '% win probability &mdash; ' + d.series_format + ' &mdash; ' + d.model_type + '</div>' +
+                '</div>' +
+                '<div class="card">' +
+                    '<div class="prob-bar-container">' +
+                        '<div class="prob-bar-label">' + d.radiant_team + '</div>' +
+                        '<div class="prob-bar-track"><div class="prob-bar-fill radiant" style="width:' + radPct + '%"></div></div>' +
+                        '<div class="prob-bar-pct">' + radPct + '%</div>' +
+                    '</div>' +
+                    '<div class="prob-bar-container">' +
+                        '<div class="prob-bar-label">' + d.dire_team + '</div>' +
+                        '<div class="prob-bar-track"><div class="prob-bar-fill dire" style="width:' + direPct + '%"></div></div>' +
+                        '<div class="prob-bar-pct">' + direPct + '%</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="card"><label>Key Factors</label><div class="factors">' +
+                    '<div class="factor"><div class="factor-label">Ratings</div><div class="factor-value">Rad: ' + (tr.radiant || 'N/A') + ' / Dire: ' + (tr.dire || 'N/A') + ' (Elo: ' + (tr.elo_win_prob || 'N/A') + ')</div></div>' +
+                    '<div class="factor"><div class="factor-label">Recent Form</div><div class="factor-value">Rad: ' + (rf.radiant_winrate || 'N/A') + ' / Dire: ' + (rf.dire_winrate || 'N/A') + '</div></div>' +
+                    '<div class="factor"><div class="factor-label">Momentum (5g)</div><div class="factor-value">Rad: ' + (rf.radiant_momentum || 'N/A') + ' / Dire: ' + (rf.dire_momentum || 'N/A') + '</div></div>' +
+                    '<div class="factor"><div class="factor-label">Head-to-Head</div><div class="factor-value">' + (h2h.games || 0) + ' games (Rad WR: ' + (h2h.radiant_winrate || 'N/A') + ')</div></div>' +
+                    '<div class="factor"><div class="factor-label">Player WR</div><div class="factor-value">Rad: ' + (ps.radiant_wr || 'N/A') + ' / Dire: ' + (ps.dire_wr || 'N/A') + '</div></div>' +
+                    '<div class="factor"><div class="factor-label">Hero Pool</div><div class="factor-value">Rad: ' + (ps.rad_hero_pool || 'N/A') + ' / Dire: ' + (ps.dire_hero_pool || 'N/A') + '</div></div>' +
+                    '<div class="factor"><div class="factor-label">Data Age</div><div class="factor-value">Rad: ' + (df.radiant || '?') + ' / Dire: ' + (df.dire || '?') + '</div></div>' +
+                '</div></div></div>';
+        }
 
+        async function loadToday(showAll) {
+            const resultDiv = document.getElementById('today-result');
+            const minRating = document.getElementById('today-rating').value.trim();
+            resultDiv.innerHTML = '<div class="loading"><span class="spinner"></span>Loading today\'s matches...</div>';
+
+            let url = '/api/today?';
+            if (showAll) url += 'all=1&';
+            if (minRating) url += 'min_rating=' + minRating + '&';
+
+            try {
+                const resp = await fetch(url);
+                const data = await resp.json();
+                if (!data.length) {
+                    resultDiv.innerHTML = '<div class="card"><p>No matches found for today. Try lowering the rating filter or using "Show All".</p></div>';
+                    return;
+                }
+
+                const byLeague = {};
+                data.forEach(function(p) {
+                    const lg = p.league || 'Unknown';
+                    if (!byLeague[lg]) byLeague[lg] = [];
+                    byLeague[lg].push(p);
+                });
+
+                let html = '';
+                const total = data.length;
+                const high = data.filter(function(p) { return p.confidence === 'HIGH'; }).length;
+                const med = data.filter(function(p) { return p.confidence === 'MEDIUM'; }).length;
+                html += '<div class="card"><strong>' + total + '</strong> matches &mdash; <span style="color:#27ae60">' + high + ' high</span> / <span style="color:#f39c12">' + med + ' medium</span> / ' + (total - high - med) + ' low confidence</div>';
+
+                for (const league in byLeague) {
+                    const preds = byLeague[league];
+                    html += '<div class="league-header">' + league + '</div>';
+                    preds.forEach(function(p) {
+                        const statusClass = p.status || '';
+                        html += '<div class="match-card" onclick="quickPredict(\'' + p.radiant_team.replace(/'/g, "\\'") + '\',\'' + p.dire_team.replace(/'/g, "\\'") + '\')">' +
+                            '<div class="match-teams"><strong>' + p.radiant_team + '</strong> vs <strong>' + p.dire_team + '</strong> <span class="status-tag status-' + statusClass + '">' + statusClass + '</span></div>' +
+                            '<div class="match-meta"><div class="match-winner">' + p.predicted_winner + ' (' + (p.win_probability*100).toFixed(1) + '%)</div><span class="conf-badge conf-' + p.confidence + '">' + p.confidence + '</span></div></div>';
+                    });
+                }
+                resultDiv.innerHTML = html;
+            } catch (err) {
+                resultDiv.innerHTML = '<div class="error">Failed to load: ' + err.message + '</div>';
+            }
+        }
+
+        function quickPredict(rad, dire) {
+            document.getElementById('radiant-input').value = rad;
+            document.getElementById('dire-input').value = dire;
+            document.querySelector('[data-tab="predict"]').click();
+            predictMatch();
+        }
+
+        async function lookupTeam() {
+            const name = document.getElementById('team-input').value.trim();
+            const resultDiv = document.getElementById('team-result');
+            if (!name) { resultDiv.innerHTML = '<div class="error">Enter a team name.</div>'; return; }
+            resultDiv.innerHTML = '<div class="loading"><span class="spinner"></span>Searching...</div>';
+
+            try {
+                const resp = await fetch('/api/team?name=' + encodeURIComponent(name));
+                const data = await resp.json();
+                if (data.error) {
+                    resultDiv.innerHTML = '<div class="error">' + data.error + '</div>';
+                } else {
+                    resultDiv.innerHTML = '<div class="card"><h3 style="color:#fff;margin-bottom:12px">' + data.name + ' <span style="color:#888">[' + data.tag + ']</span></h3>' +
+                        '<div class="stat-grid">' +
+                            '<div class="stat-box"><div class="stat-value">' + (data.rating || 'N/A') + '</div><div class="stat-label">Rating</div></div>' +
+                            '<div class="stat-box"><div class="stat-value green">' + (data.wins || 0) + '</div><div class="stat-label">Wins</div></div>' +
+                            '<div class="stat-box"><div class="stat-value red">' + (data.losses || 0) + '</div><div class="stat-label">Losses</div></div>' +
+                            '<div class="stat-box"><div class="stat-value">' + (data.winrate ? (data.winrate * 100).toFixed(1) + '%' : 'N/A') + '</div><div class="stat-label">Win Rate</div></div>' +
+                        '</div>' +
+                        '<p style="color:#888;font-size:0.8em">Team ID: ' + data.team_id + '</p></div>';
+                }
+            } catch (err) {
+                resultDiv.innerHTML = '<div class="error">Request failed: ' + err.message + '</div>';
+            }
+        }
+
+        async function loadAccuracy() {
+            const days = document.getElementById('accuracy-days').value;
+            const resultDiv = document.getElementById('accuracy-result');
+            resultDiv.innerHTML = '<div class="loading"><span class="spinner"></span>Loading accuracy data...</div>';
+
+            try {
+                const resp = await fetch('/api/accuracy?days=' + days);
+                const data = await resp.json();
+                const s = data.stats || {};
+                const drift = data.drift || {};
+
+                let accColor = 'green';
+                if (s.accuracy !== null && s.accuracy < 0.6) accColor = 'yellow';
+                if (s.accuracy !== null && s.accuracy < 0.52) accColor = 'red';
+
+                let html = '';
+
+                if (drift.detected) {
+                    html += '<div class="card" style="border-color:#e74c3c;background:#2a1a1a"><strong style="color:#e74c3c">Drift Detected:</strong> ' + drift.reason + '<br><span style="color:#888;font-size:0.85em">Consider retraining: python main.py train --matches 1500</span></div>';
+                }
+
+                html += '<div class="stat-grid">' +
+                    '<div class="stat-box"><div class="stat-value">' + (s.total_predictions || 0) + '</div><div class="stat-label">Total</div></div>' +
+                    '<div class="stat-box"><div class="stat-value">' + (s.resolved || 0) + '</div><div class="stat-label">Resolved</div></div>' +
+                    '<div class="stat-box"><div class="stat-value ' + accColor + '">' + (s.accuracy !== null ? (s.accuracy * 100).toFixed(1) + '%' : 'N/A') + '</div><div class="stat-label">Accuracy</div></div>' +
+                    '<div class="stat-box"><div class="stat-value">' + (s.brier_score !== null ? s.brier_score.toFixed(4) : 'N/A') + '</div><div class="stat-label">Brier Score</div></div></div>';
+
+                if (s.by_confidence && s.by_confidence.length) {
+                    html += '<div class="card"><label>By Confidence Level</label><table class="data-table"><tr><th>Level</th><th>Predictions</th><th>Resolved</th><th>Accuracy</th></tr>';
+                    s.by_confidence.forEach(function(c) {
+                        const acc = c.accuracy !== null ? (c.accuracy * 100).toFixed(1) + '%' : 'N/A';
+                        html += '<tr><td><span class="conf-badge conf-' + c.confidence + '">' + c.confidence + '</span></td><td>' + c.total + '</td><td>' + c.resolved + '</td><td>' + acc + '</td></tr>';
+                    });
+                    html += '</table></div>';
+                }
+
+                const trend = s.trend || {};
+                if (trend.last_7d !== null || trend.prev_7d !== null) {
+                    const l7 = trend.last_7d !== null ? (trend.last_7d * 100).toFixed(1) + '%' : 'N/A';
+                    const p7 = trend.prev_7d !== null ? (trend.prev_7d * 100).toFixed(1) + '%' : 'N/A';
+                    html += '<div class="card"><label>Trend</label><div class="stat-grid">' +
+                        '<div class="stat-box"><div class="stat-value">' + l7 + '</div><div class="stat-label">Last 7 Days</div></div>' +
+                        '<div class="stat-box"><div class="stat-value">' + p7 + '</div><div class="stat-label">Previous 7 Days</div></div></div></div>';
+                }
+
+                var recent = data.recent_predictions || [];
+                if (recent.length) {
+                    html += '<div class="card"><label>Recent Predictions</label><table class="data-table"><tr><th>Result</th><th>Match</th><th>Prediction</th><th>Confidence</th><th>Date</th></tr>';
+                    recent.forEach(function(p) {
+                        var statusIcon = '?', statusColor = '#888';
+                        if (p.correct === 1) { statusIcon = 'Y'; statusColor = '#27ae60'; }
+                        else if (p.correct === 0) { statusIcon = 'N'; statusColor = '#e74c3c'; }
+                        var dt = p.predicted_at ? p.predicted_at.substring(0, 16) : '';
+                        html += '<tr><td style="color:' + statusColor + ';font-weight:700">' + statusIcon + '</td><td>' + p.radiant_team + ' vs ' + p.dire_team + '</td><td>' + p.predicted_winner + '</td><td><span class="conf-badge conf-' + p.confidence + '">' + p.confidence + '</span></td><td style="color:#888;font-size:0.8em">' + dt + '</td></tr>';
+                    });
+                    html += '</table></div>';
+                }
+
+                var models = data.model_history || [];
+                if (models.length) {
+                    html += '<div class="card"><label>Training History</label><table class="data-table"><tr><th>Date</th><th>Samples</th><th>CV Accuracy</th><th>Brier</th><th>Validation</th></tr>';
+                    models.forEach(function(m) {
+                        var dt = m.trained_at ? m.trained_at.substring(0, 16) : '';
+                        var cv = m.cv_accuracy !== null ? (m.cv_accuracy * 100).toFixed(1) + '%' : 'N/A';
+                        var brier = m.brier_score !== null ? m.brier_score.toFixed(4) : 'N/A';
+                        html += '<tr><td style="font-size:0.8em">' + dt + '</td><td>' + (m.n_samples || 'N/A') + '</td><td>' + cv + '</td><td>' + brier + '</td><td>' + (m.validation_type || 'N/A') + '</td></tr>';
+                    });
+                    html += '</table></div>';
+                }
+
+                resultDiv.innerHTML = html || '<div class="card"><p>No accuracy data available yet. Make some predictions first.</p></div>';
+            } catch (err) {
+                resultDiv.innerHTML = '<div class="error">Failed to load: ' + err.message + '</div>';
+            }
+        }
+    </script>
 </body>
 </html>

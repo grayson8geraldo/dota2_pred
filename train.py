@@ -1,8 +1,8 @@
 """
 Training pipeline for the Dota 2 prediction model.
 
-Collects pro match data, extracts features, trains the ensemble model,
-and evaluates its performance.
+Collects pro match data, extracts features, trains the ensemble model
+with temporal validation, and evaluates performance.
 """
 
 import os
@@ -23,6 +23,7 @@ from data_collector import (
 )
 from feature_engine import extract_features, get_feature_names, N_FEATURES
 from model import Dota2Predictor
+from prediction_tracker import PredictionTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,12 +33,16 @@ def build_training_data(
     matches: list[dict],
     teams_data: dict,
     hero_stats: dict,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Build feature matrix and label vector from pro match data.
+    Build feature matrix, label vector, and timestamps from pro match data.
+
+    Returns:
+        (X, y, timestamps) where timestamps are start_time for each sample.
     """
     X_list = []
     y_list = []
+    ts_list = []
     skipped = 0
 
     for match in matches:
@@ -50,7 +55,6 @@ def build_training_data(
                 skipped += 1
                 continue
 
-            # Get or create team data
             rad_team = teams_data.get(rad_id, {
                 "info": {"rating": 1200}, "matches": [], "heroes": [], "players": [],
             })
@@ -58,7 +62,6 @@ def build_training_data(
                 "info": {"rating": 1200}, "matches": [], "heroes": [], "players": [],
             })
 
-            # Determine series type from match data
             series_type = match.get("series_type", 1)
 
             features = extract_features(
@@ -75,18 +78,12 @@ def build_training_data(
                 skipped += 1
                 continue
 
-            # Check for NaN/inf
             if np.any(np.isnan(features)) or np.any(np.isinf(features)):
-                bad_idx = np.where(np.isnan(features) | np.isinf(features))[0]
-                fnames = get_feature_names()
-                bad_names = [fnames[i] for i in bad_idx if i < len(fnames)]
-                logger.warning(
-                    f"Match {match.get('match_id', '?')}: NaN/inf in features: {bad_names}"
-                )
                 features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
 
             X_list.append(features)
             y_list.append(1 if radiant_win else 0)
+            ts_list.append(match.get("start_time", 0))
 
         except Exception as e:
             logger.warning(f"Error processing match {match.get('match_id', '?')}: {e}")
@@ -95,36 +92,35 @@ def build_training_data(
     logger.info(f"Built {len(X_list)} training samples, skipped {skipped}")
 
     if not X_list:
-        return np.empty((0, N_FEATURES)), np.empty(0)
+        return np.empty((0, N_FEATURES)), np.empty(0), np.empty(0)
 
-    return np.array(X_list), np.array(y_list)
+    return np.array(X_list), np.array(y_list), np.array(ts_list)
 
 
-def train_model(n_matches: int = config.PRO_MATCHES_LIMIT):
+def train_model(n_matches: int = config.PRO_MATCHES_LIMIT,
+                tune: bool = False):
     """
     Full training pipeline:
     1. Collect pro match data
     2. Collect team data for all teams in matches
     3. Collect hero stats
-    4. Extract features
-    5. Train model
-    6. Save model and caches
+    4. Extract features (sorted by time)
+    5. Train model with temporal validation and sample weights
+    6. Save model, caches, and metrics
     """
     client = OpenDotaClient()
     os.makedirs(config.MODEL_PATH, exist_ok=True)
 
-    # Step 1: Collect match data (incremental — merge new with existing)
+    # Step 1: Collect match data (incremental)
     matches_file = os.path.join(config.MODEL_PATH, "training_matches.json")
     cached = load_data(matches_file)
     if cached:
         logger.info(f"Found cached training data ({len(cached)} matches)")
         existing_ids = {m.get("match_id") for m in cached if m.get("match_id")}
 
-        # Determine how many new matches we need
         need = max(0, n_matches - len(cached))
         if need > 0 or len(cached) < n_matches * 0.8:
-            # Fetch new matches and merge with existing
-            fetch_count = max(need, n_matches // 3)  # at least 1/3 of target
+            fetch_count = max(need, n_matches // 3)
             logger.info(
                 f"Fetching {fetch_count} new matches to supplement "
                 f"{len(cached)} cached..."
@@ -138,7 +134,6 @@ def train_model(n_matches: int = config.PRO_MATCHES_LIMIT):
                     existing_ids.add(mid)
                     added += 1
             logger.info(f"  Added {added} new unique matches (total: {len(cached)})")
-            # Keep only the most recent n_matches (by match_id = roughly chronological)
             cached.sort(key=lambda m: m.get("match_id", 0), reverse=True)
             cached = cached[:n_matches]
             save_data(cached, matches_file)
@@ -172,15 +167,14 @@ def train_model(n_matches: int = config.PRO_MATCHES_LIMIT):
     else:
         teams_data = {}
 
-    # Fetch missing teams
     missing_teams = [tid for tid in team_ids if tid not in teams_data]
     if missing_teams:
         logger.info(f"Fetching data for {len(missing_teams)} teams...")
-        new_data = collect_team_data(client, missing_teams[:300])  # Top 300 teams
+        new_data = collect_team_data(client, missing_teams[:300])
         teams_data.update(new_data)
         save_data({str(k): v for k, v in teams_data.items()}, teams_file)
 
-    # Step 3: Hero stats
+    # Step 3: Hero stats (still used for team hero pool analysis)
     hero_stats_file = os.path.join(config.MODEL_PATH, config.HERO_STATS_FILE)
     hero_stats = load_data(hero_stats_file)
     if not hero_stats:
@@ -190,35 +184,60 @@ def train_model(n_matches: int = config.PRO_MATCHES_LIMIT):
 
     # Step 4: Build training data
     logger.info("Building training features...")
-    X, y = build_training_data(matches, teams_data, hero_stats)
+    X, y, timestamps = build_training_data(matches, teams_data, hero_stats)
 
     if X.shape[0] < 50:
         logger.error(f"Not enough training data: {X.shape[0]} samples")
         return None
 
+    # Sort by time (critical for temporal validation)
+    sort_idx = np.argsort(timestamps)
+    X = X[sort_idx]
+    y = y[sort_idx]
+    timestamps = timestamps[sort_idx]
+
     logger.info(f"Training data: {X.shape[0]} samples, {X.shape[1]} features")
     logger.info(f"Class balance: {y.mean():.2%} radiant wins")
+    if timestamps[0] > 0:
+        from datetime import datetime, timezone
+        oldest = datetime.fromtimestamp(timestamps[0], tz=timezone.utc)
+        newest = datetime.fromtimestamp(timestamps[-1], tz=timezone.utc)
+        logger.info(f"Date range: {oldest:%Y-%m-%d} to {newest:%Y-%m-%d}")
 
     # Step 5: Train model
     model = Dota2Predictor()
-    metrics = model.train(X, y)
+    metrics = model.train(X, y, start_times=timestamps, tune_hyperparams=tune)
 
-    # Step 6: Save
+    # Step 6: Save model and metrics
     model.save()
     logger.info("Model training complete!")
+
+    # Log metrics to SQLite
+    try:
+        tracker = PredictionTracker()
+        tracker.log_model_metrics(metrics, validation_type="temporal")
+    except Exception as e:
+        logger.warning(f"Could not log metrics to DB: {e}")
 
     # Print feature importances
     feature_names = get_feature_names()
     importances = model.get_feature_importances(feature_names)
-    logger.info("\nTop 10 feature importances:")
-    for name, imp in importances[:10]:
-        logger.info(f"  {name:30s} {imp:.4f}")
+    if importances:
+        logger.info("\nTop 15 feature importances:")
+        for name, imp in importances[:15]:
+            logger.info(f"  {name:30s} {imp:.4f}")
 
     return metrics
 
 
 if __name__ == "__main__":
-    metrics = train_model()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--matches", type=int, default=1500)
+    parser.add_argument("--tune", action="store_true", help="Run Optuna hyperparameter tuning")
+    args = parser.parse_args()
+
+    metrics = train_model(n_matches=args.matches, tune=args.tune)
     if metrics:
         print("\n=== Training Results ===")
         for k, v in metrics.items():

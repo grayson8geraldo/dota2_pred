@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Dota 2 Match Prediction Tool
-=============================
+Dota 2 Match Prediction Tool (Pre-Match Only)
+==============================================
 Predicts outcomes of professional Dota 2 matches using team statistics,
-recent form, head-to-head records, hero draft analysis, and more.
+recent form, head-to-head records, player analysis, and more.
 
 Usage:
     python main.py predict <radiant_team> <dire_team> [--format BO1|BO2|BO3|BO5]
-    python main.py today
-    python main.py live
-    python main.py train [--matches N]
+    python main.py today [--all] [--min-rating N]
+    python main.py train [--matches N] [--tune]
     python main.py team <team_name>
+    python main.py accuracy [--days N]
+    python main.py drift
     python main.py refresh
 """
 
 import argparse
-import json
 import logging
 import sys
 
@@ -54,7 +54,6 @@ def format_prediction(pred: dict) -> str:
     lines.append(f"  Confidence:       {pred['confidence']}")
     lines.append("")
 
-    # Probability bars
     rad_prob = pred["radiant_win_prob"]
     dire_prob = pred["dire_win_prob"]
     rad_bar = "#" * int(rad_prob * 40)
@@ -63,7 +62,6 @@ def format_prediction(pred: dict) -> str:
     lines.append(f"  {pred['dire_team'][:15]:>15s} [{dire_bar:<40s}] {dire_prob:.1%}")
     lines.append("")
 
-    # Breakdown
     bd = pred.get("breakdown", {})
     if bd:
         lines.append("  KEY FACTORS:")
@@ -93,10 +91,21 @@ def format_prediction(pred: dict) -> str:
             else:
                 lines.append("  Head-to-Head:   No previous matches")
 
+        ps = bd.get("player_strength", {})
+        if ps:
+            lines.append(f"  Player WR:      Radiant={ps.get('radiant_wr', 'N/A')}"
+                         f"  Dire={ps.get('dire_wr', 'N/A')}")
+            lines.append(f"  Hero Pool:      Radiant={ps.get('rad_hero_pool', 'N/A')}"
+                         f"  Dire={ps.get('dire_hero_pool', 'N/A')}")
+
+        df = bd.get("data_freshness", {})
+        if df:
+            lines.append(f"  Data Age:       Radiant={df.get('radiant', '?')}"
+                         f"  Dire={df.get('dire', '?')}")
+
     lines.append("")
     lines.append("=" * 60)
 
-    # Recommendation
     if pred["confidence"] == "HIGH":
         lines.append(f"  >> STRONG PREDICTION: {pred['predicted_winner']} ({pred['win_probability']:.1%})")
     elif pred["confidence"] == "MEDIUM":
@@ -124,35 +133,14 @@ def cmd_predict(args):
     predictor.save_caches()
 
 
-def cmd_live(args):
-    """Predict all live pro matches."""
-    predictor = MatchPredictor(use_ml_model=True)
-
-    print("\nFetching live matches...")
-    predictions = predictor.predict_live_matches()
-
-    if not predictions:
-        print("  No live pro matches with team data found.")
-        print("  Try again when professional matches are being played.")
-        return
-
-    print(f"\nFound {len(predictions)} live match(es):\n")
-    for pred in predictions:
-        league = pred.get("league", "Unknown")
-        print(f"  League: {league}")
-        if pred.get("match_id"):
-            print(f"  Match ID: {pred['match_id']}")
-        print(format_prediction(pred))
-
-    predictor.save_caches()
-
-
 def cmd_train(args):
     """Train the prediction model on pro match data."""
     print(f"\nStarting model training with {args.matches} matches...")
+    if args.tune:
+        print("Hyperparameter tuning enabled (this will take longer).")
     print("This will take a while due to API rate limits.\n")
 
-    metrics = train_model(n_matches=args.matches)
+    metrics = train_model(n_matches=args.matches, tune=args.tune)
 
     if metrics:
         print("\n" + "=" * 50)
@@ -170,9 +158,11 @@ def cmd_train(args):
 
         cv_acc = metrics.get("cv_accuracy_ensemble", 0)
         if cv_acc >= 0.70:
-            print(f"\n  Model achieves {cv_acc:.1%} cross-validation accuracy (target: 70%+)")
+            print(f"\n  Model achieves {cv_acc:.1%} temporal CV accuracy (target: 70%+)")
         else:
             print(f"\n  Model accuracy: {cv_acc:.1%}. Consider collecting more data.")
+        print(f"  Validation: {metrics.get('validation', 'temporal')}")
+        print(f"  Engine: {metrics.get('model_type', 'unknown')}")
     else:
         print("\n  Training failed. Check logs for details.")
 
@@ -214,7 +204,7 @@ def cmd_today(args):
         print(f"\nFetching today's matches (min avg rating: {min_rating or config.MIN_TEAM_RATING})...")
         print("  Use --all to include low-tier matches\n")
 
-    print("  Sources: OpenDota (live + pro), Liquipedia (upcoming)")
+    print("  Sources: OpenDota (pro), Liquipedia (upcoming)")
     print("  This may take a minute...\n")
 
     predictions = predictor.predict_today_matches(
@@ -231,22 +221,17 @@ def cmd_today(args):
         print("  Or use 'python main.py predict <team1> <team2>' for a manual prediction.")
         return
 
-    # Group by league
     by_league = {}
     for p in predictions:
         league = p.get("league", "Unknown")
         by_league.setdefault(league, []).append(p)
 
     total = len(predictions)
-    live_count = sum(1 for p in predictions if p.get("status") == "LIVE")
-    upcoming_count = sum(1 for p in predictions if p.get("status") == "UPCOMING")
     high = sum(1 for p in predictions if p["confidence"] == "HIGH")
     medium = sum(1 for p in predictions if p["confidence"] == "MEDIUM")
 
     print(f"\n{'=' * 60}")
-    print(f"  TODAY'S PREDICTIONS  ({total} matches)")
-    if live_count:
-        print(f"  Live: {live_count}  |  Upcoming: {upcoming_count}  |  Completed: {total - live_count - upcoming_count}")
+    print(f"  TODAY'S PRE-MATCH PREDICTIONS  ({total} matches)")
     print(f"  High confidence: {high}  |  Medium: {medium}  |  Low: {total - high - medium}")
     print(f"{'=' * 60}")
 
@@ -256,7 +241,6 @@ def cmd_today(args):
             status = pred.get("status", "")
             status_tag = f" [{status}]" if status else ""
 
-            # Show scheduled start time for upcoming matches
             time_tag = ""
             if pred.get("start_time"):
                 try:
@@ -282,7 +266,6 @@ def cmd_today(args):
             print(f"  {conf_mark}  {rad} vs {dire}{status_tag}{time_tag}{rating_tag}")
             print(f"        -> {winner} ({prob:.1%})  [{pred['confidence']}]")
 
-    # Detailed output for high-confidence picks
     high_conf = [p for p in predictions if p["confidence"] == "HIGH"]
     if high_conf:
         print(f"\n{'=' * 60}")
@@ -294,33 +277,111 @@ def cmd_today(args):
     predictor.save_caches()
 
 
+def cmd_accuracy(args):
+    """Show prediction accuracy statistics."""
+    from prediction_tracker import PredictionTracker
+    tracker = PredictionTracker()
+    stats = tracker.get_accuracy_stats(days=args.days)
+
+    print(f"\n{'=' * 60}")
+    print(f"  PREDICTION ACCURACY (last {args.days} days)")
+    print(f"{'=' * 60}")
+    print(f"  Total predictions: {stats['total_predictions']}")
+    print(f"  Resolved:          {stats['resolved']}")
+
+    if stats['accuracy'] is not None:
+        print(f"  Overall accuracy:  {stats['accuracy']:.1%}")
+    else:
+        print("  Overall accuracy:  N/A (no resolved predictions)")
+
+    if stats['brier_score'] is not None:
+        print(f"  Brier score:       {stats['brier_score']:.4f}")
+
+    if stats['by_confidence']:
+        print(f"\n  By Confidence Level:")
+        for c in stats['by_confidence']:
+            acc = f"{c['accuracy']:.1%}" if c['accuracy'] is not None else "N/A"
+            print(f"    {c['confidence']:>6s}: {c['total']} predictions, "
+                  f"{c['resolved']} resolved, accuracy: {acc}")
+
+    if stats['by_model']:
+        print(f"\n  By Model Type:")
+        for m in stats['by_model']:
+            acc = f"{m['accuracy']:.1%}" if m['accuracy'] is not None else "N/A"
+            print(f"    {m['model_type'] or 'unknown':>15s}: {m['total']} predictions, accuracy: {acc}")
+
+    trend = stats.get('trend', {})
+    if trend.get('last_7d') is not None or trend.get('prev_7d') is not None:
+        print(f"\n  Trend:")
+        l7 = f"{trend['last_7d']:.1%}" if trend['last_7d'] is not None else "N/A"
+        p7 = f"{trend['prev_7d']:.1%}" if trend['prev_7d'] is not None else "N/A"
+        print(f"    Last 7 days: {l7}  |  Previous 7 days: {p7}")
+
+    print()
+
+    # Show recent predictions
+    recent = tracker.get_recent_predictions(limit=10)
+    if recent:
+        print(f"  RECENT PREDICTIONS:")
+        print("-" * 60)
+        for p in recent:
+            status = "?" if p["correct"] is None else ("Y" if p["correct"] else "N")
+            print(f"  [{status}] {p['radiant_team']} vs {p['dire_team']} "
+                  f"-> {p['predicted_winner']} ({p['confidence']}) "
+                  f"[{p['predicted_at'][:16]}]")
+        print()
+
+
+def cmd_drift(args):
+    """Check for model drift."""
+    from prediction_tracker import PredictionTracker
+    tracker = PredictionTracker()
+    result = tracker.check_drift(window_days=14)
+
+    print(f"\n{'=' * 60}")
+    print(f"  MODEL DRIFT CHECK (14-day window)")
+    print(f"{'=' * 60}")
+
+    if result["drift_detected"]:
+        print(f"  WARNING: Drift detected!")
+        print(f"  Reason: {result['reason']}")
+        print(f"\n  Recommendation: Retrain the model with fresh data.")
+        print(f"    python main.py train --matches 1500")
+    else:
+        stats = result["stats"]
+        if stats["resolved"] > 0:
+            print(f"  No drift detected. Model performing normally.")
+            if stats["accuracy"] is not None:
+                print(f"  Current accuracy: {stats['accuracy']:.1%} ({stats['resolved']} resolved)")
+        else:
+            print(f"  Not enough resolved predictions to assess drift.")
+            print(f"  Total predictions: {stats['total_predictions']}, Resolved: {stats['resolved']}")
+
+    print()
+
+
 def cmd_refresh(args):
-    """Refresh cached hero, team, and teams-list data."""
+    """Refresh cached data."""
     predictor = MatchPredictor(use_ml_model=False)
 
-    # Refresh teams list (used for name → ID resolution)
     print("\nRefreshing teams list...")
     teams = predictor.client.get_teams() or []
     if teams:
-        import os
+        import os, json
         teams_path = os.path.join(config.MODEL_PATH, config.TEAMS_LIST_FILE)
         os.makedirs(config.MODEL_PATH, exist_ok=True)
-        import json as _json
         with open(teams_path, "w") as f:
-            _json.dump(teams, f)
+            json.dump(teams, f)
         predictor._teams_list = teams
         print(f"  Cached {len(teams)} teams to disk.")
     else:
-        print("  WARNING: Could not fetch teams list (rate limited?). "
-              "Try again in a few minutes.")
+        print("  WARNING: Could not fetch teams list.")
 
-    # Refresh match data for all cached teams
     if predictor.team_cache:
         print(f"\nRefreshing match history for {len(predictor.team_cache)} cached teams...")
         predictor.refresh_teams_matches(list(predictor.team_cache.keys()))
         print("  Match history updated.")
 
-    # Refresh hero stats
     print("\nRefreshing hero stats...")
     predictor.refresh_hero_stats()
     predictor.save_caches()
@@ -329,16 +390,19 @@ def cmd_refresh(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Dota 2 Match Prediction Tool",
+        description="Dota 2 Match Prediction Tool (Pre-Match)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python main.py predict "Team Spirit" "Tundra Esports" --format BO3
   python main.py predict "Gaimin Gladiators" "BetBoom Team"
   python main.py today
-  python main.py live
-  python main.py train --matches 300
+  python main.py today --all --min-rating 900
+  python main.py train --matches 1500
+  python main.py train --matches 1500 --tune
   python main.py team "Team Spirit"
+  python main.py accuracy --days 7
+  python main.py drift
   python main.py refresh
         """,
     )
@@ -346,21 +410,19 @@ Examples:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # predict
-    p_pred = subparsers.add_parser("predict", help="Predict a match outcome")
+    p_pred = subparsers.add_parser("predict", help="Predict a match outcome (pre-match)")
     p_pred.add_argument("radiant", help="Radiant team name")
     p_pred.add_argument("dire", help="Dire team name")
     p_pred.add_argument("--format", default="BO3", choices=["BO1", "BO2", "BO3", "BO5"],
                         help="Match format (default: BO3)")
     p_pred.set_defaults(func=cmd_predict)
 
-    # live
-    p_live = subparsers.add_parser("live", help="Predict live matches")
-    p_live.set_defaults(func=cmd_live)
-
     # train
     p_train = subparsers.add_parser("train", help="Train the prediction model")
     p_train.add_argument("--matches", type=int, default=1500,
                          help="Number of pro matches to train on (default: 1500)")
+    p_train.add_argument("--tune", action="store_true",
+                         help="Run Optuna hyperparameter tuning")
     p_train.set_defaults(func=cmd_train)
 
     # team
@@ -375,6 +437,16 @@ Examples:
     p_today.add_argument("--min-rating", type=int, default=0,
                          help="Minimum average team rating to include (default: 1100)")
     p_today.set_defaults(func=cmd_today)
+
+    # accuracy
+    p_acc = subparsers.add_parser("accuracy", help="Show prediction accuracy stats")
+    p_acc.add_argument("--days", type=int, default=30,
+                       help="Number of days to analyze (default: 30)")
+    p_acc.set_defaults(func=cmd_accuracy)
+
+    # drift
+    p_drift = subparsers.add_parser("drift", help="Check for model drift")
+    p_drift.set_defaults(func=cmd_drift)
 
     # refresh
     p_refresh = subparsers.add_parser("refresh", help="Refresh cached data")
